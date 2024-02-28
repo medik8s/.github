@@ -21,8 +21,8 @@ on:
         description: "The community to release the bundle to (either `K8S` or `OKD`)"
         required: true
         type: string
-      recipe:
-        description: "The recipe to use for creating the community bundle"
+      make_targets:
+        description: "The Makefile targets to use for creating the community bundle"
         required: true
         type: string
 
@@ -42,7 +42,7 @@ jobs:
       - name: Log inputs
         run: |
           echo "Community: ${{ inputs.community }}"
-          echo "Recipe: ${{ inputs.recipe }}"
+          echo "Make targets: ${{ inputs.make_targets }}"
           echo "Building version: ${VERSION}"
           echo "which replaces version: ${PREVIOUS_VERSION}"
           echo "Lower skip range bound: ${SKIP_RANGE_LOWER}"
@@ -81,7 +81,7 @@ jobs:
           export VERSION=${VERSION} 
           export PREVIOUS_VERSION=${PREVIOUS_VERSION}
           export SKIP_RANGE_LOWER=${SKIP_RANGE_LOWER}
-          rm -r operator/bundle && make -C operator ${{ inputs.recipe }}
+          rm -r operator/bundle && make -C operator ${{ inputs.make_targets }}
 
       - name: Copy bundle
         run: |
