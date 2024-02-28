@@ -106,5 +106,5 @@ jobs:
           git -C community add operators/${OPERATOR_NAME}/${VERSION}
           git -C community switch --create ${BRANCH}
           git -C community status
-          git -C community commit -m "Add ${OPERATOR_NAME}-${VERSION}"
+          git -C community commit --signoff --message "Add ${OPERATOR_NAME}-${VERSION}"
           git -C community push --set-upstream fork ${BRANCH}
