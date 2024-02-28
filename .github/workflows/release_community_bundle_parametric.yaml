@@ -18,7 +18,7 @@ on:
         required: true
         type: string
       community:
-        description: "The community to release the bundle to (either `k8s-operatorhub` or `redhat-openshift-ecosystem`)"
+        description: "The community to release the bundle to (either `K8S` or `OKD`)"
         required: true
         type: string
       recipe:
@@ -60,7 +60,7 @@ jobs:
 
       - name: Checkout Kubernetes Community Operators Hub
         uses: actions/checkout@v3
-        if: ${{ inputs.community == 'k8s-operatorhub' }}
+        if: ${{ inputs.community == 'K8S' }}
         with:
           repository: 'k8s-operatorhub/community-operators'
           path: community
@@ -69,7 +69,7 @@ jobs:
 
       - name: Checkout Red Hat Community Operators
         uses: actions/checkout@v3
-        if: ${{ inputs.community == 'redhat-openshift-ecosystem' }}
+        if: ${{ inputs.community == 'OKD' }}
         with:
           repository: 'redhat-openshift-ecosystem/community-operators-prod'
           path: community
@@ -91,9 +91,9 @@ jobs:
 
       - name: Commit and push
         run: |
-          if [ ${{ inputs.community }} == 'k8s-operatorhub' ]; then
+          if [ ${{ inputs.community }} == 'K8S' ]; then
             git -C community remote add fork https://github.com/medik8s/community-operators.git
-          elif [ ${{ inputs.community }} == 'redhat-openshift-ecosystem' ]; then
+          elif [ ${{ inputs.community }} == 'OKD' ]; then
             git -C community remote add fork https://github.com/medik8s/community-operators-prod.git
           else
             echo "Unknown community: ${{ inputs.community }}"
