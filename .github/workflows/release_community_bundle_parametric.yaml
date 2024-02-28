@@ -1,0 +1,110 @@
+name: Community bundle
+on:
+  workflow_call:
+    secrets:
+      COMMUNITY_OPERATOR_TOKEN:
+        required: true
+    inputs:
+      version:
+        description: "The version to release, without the leading `v`"
+        required: true
+        type: string
+      previous_version:
+        description: "The previous version, used for the CVS's `replaces` field, without the leading `v`"
+        required: true
+        type: string
+      skip_range_lower:
+        description: "Lower bound for the skipRange field in the CSV, should be set to the oldest supported version, without the leading `v`"
+        required: true
+        type: string
+      community:
+        description: "The community to release the bundle to (either `K8S` or `OKD`)"
+        required: true
+        type: string
+      make_targets:
+        description: "The Makefile targets to use for creating the community bundle"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  make_community_bundle:
+    name: Build and commit PR for bundle in Operator Community
+    runs-on: ubuntu-22.04
+    env:
+      PROJECT: ${{ github.repository }}
+      VERSION: ${{ inputs.version }}
+      PREVIOUS_VERSION: ${{ inputs.previous_version }}
+      SKIP_RANGE_LOWER: ${{ inputs.skip_range_lower }}
+    steps:
+      - name: Log inputs
+        run: |
+          echo "Community: ${{ inputs.community }}"
+          echo "Make targets: ${{ inputs.make_targets }}"
+          echo "Building version: ${VERSION}"
+          echo "which replaces version: ${PREVIOUS_VERSION}"
+          echo "Lower skip range bound: ${SKIP_RANGE_LOWER}"
+
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          path: operator
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version-file: operator/go.mod
+
+      - name: Checkout Kubernetes Community Operators Hub
+        uses: actions/checkout@v3
+        if: ${{ inputs.community == 'K8S' }}
+        with:
+          repository: 'k8s-operatorhub/community-operators'
+          path: community
+          token: ${{ secrets.COMMUNITY_OPERATOR_TOKEN }}
+          fetch-depth: 0
+
+      - name: Checkout Red Hat Community Operators
+        uses: actions/checkout@v3
+        if: ${{ inputs.community == 'OKD' }}
+        with:
+          repository: 'redhat-openshift-ecosystem/community-operators-prod'
+          path: community
+          token: ${{ secrets.COMMUNITY_OPERATOR_TOKEN }}
+          fetch-depth: 0
+
+      - name: Build Community bundle
+        run: |
+          export VERSION=${VERSION} 
+          export PREVIOUS_VERSION=${PREVIOUS_VERSION}
+          export SKIP_RANGE_LOWER=${SKIP_RANGE_LOWER}
+          rm -r operator/bundle && make -C operator ${{ inputs.make_targets }}
+
+      - name: Copy bundle
+        run: |
+          OPERATOR_NAME=$(basename ${PROJECT})
+          mkdir -p community/operators/${OPERATOR_NAME}/${VERSION}
+          cp -vr operator/bundle/* community/operators/${OPERATOR_NAME}/${VERSION}
+
+      - name: Commit and push
+        run: |
+          if [ ${{ inputs.community }} == 'K8S' ]; then
+            git -C community remote add fork https://github.com/medik8s/community-operators.git
+          elif [ ${{ inputs.community }} == 'OKD' ]; then
+            git -C community remote add fork https://github.com/medik8s/community-operators-prod.git
+          else
+            echo "Unknown community: ${{ inputs.community }}"
+            exit 1
+          fi
+          OPERATOR_NAME=$(basename ${PROJECT})
+          BRANCH=add-${OPERATOR_NAME}-${VERSION}
+          git -C community config --global user.name "Medik8s Team"
+          git -C community config --global user.email "medik8s@googlegroups.com"
+          git -C community add operators/${OPERATOR_NAME}/${VERSION}
+          git -C community switch --create ${BRANCH}
+          git -C community status
+          git -C community commit --signoff --message "Add ${OPERATOR_NAME}-${VERSION}"
+          git -C community push --set-upstream fork ${BRANCH}
