@@ -2,15 +2,16 @@
 Please fill out the information below to expedite the review and merge of your pull request.
 -->
 
-#### What this PR does / why we need it:
-<!-- A clear description of the problem you are trying to solve -->
-
+#### Why we need this PR
+<!--
+Outline the purpose of this PR, whether it's addressing a bug, implementing a new feature, or solving a specific problem.
+-->
 
 #### Changes made
 <!-- Outline the specific changes made in this merge request. -->
 
 
-#### Which issue(s) this PR fixes:
+#### Which issue(s) this PR fixes
 <!--
 Any reference to relevant issue(s).
 Please use the following format, so that the issue will be automatically closed when this PR is merged (see https://help.github.com/articles/closing-issues-using-keywords/)
