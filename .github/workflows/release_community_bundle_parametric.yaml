@@ -15,7 +15,7 @@ on:
         type: string
       skip_range_lower:
         description: "Lower bound for the skipRange field in the CSV, should be set to the oldest supported version, without the leading `v`"
-        required: true
+        required: false
         type: string
       community:
         description: "The community to release the bundle to (either `K8S` or `OKD`)"
@@ -78,6 +78,7 @@ jobs:
 
       - name: Build Community bundle
         run: |
+          echo "Building ${{inputs.community }} bundle"
           export VERSION=${VERSION} 
           export PREVIOUS_VERSION=${PREVIOUS_VERSION}
           export SKIP_RANGE_LOWER=${SKIP_RANGE_LOWER}
@@ -91,6 +92,7 @@ jobs:
 
       - name: Commit and push
         run: |
+          echo "Adding ${{inputs.community }} fork"
           if [ ${{ inputs.community }} == 'K8S' ]; then
             git -C community remote add fork https://github.com/medik8s/community-operators.git
           elif [ ${{ inputs.community }} == 'OKD' ]; then
