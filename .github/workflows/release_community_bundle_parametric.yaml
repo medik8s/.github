@@ -11,12 +11,15 @@ on:
         type: string
       previous_version:
         description: "The previous version, used for the CVS's `replaces` field, without the leading `v`"
-        required: true
+        required: false
         type: string
       skip_range_lower:
         description: "Lower bound for the skipRange field in the CSV, should be set to the oldest supported version, without the leading `v`"
         required: false
-        type: string
+        type: string 
+      ocp_version:
+       description: "The target OCP version for the release (mandatory for OKD community)"
+       required: false
       community:
         description: "The community to release the bundle to (either `K8S` or `OKD`)"
         required: true
@@ -38,14 +41,16 @@ jobs:
       VERSION: ${{ inputs.version }}
       PREVIOUS_VERSION: ${{ inputs.previous_version }}
       SKIP_RANGE_LOWER: ${{ inputs.skip_range_lower }}
+      OCP_VERSION: ${{ inputs.ocp_version }}
     steps:
       - name: Log inputs
         run: |
           echo "Community: ${{ inputs.community }}"
           echo "Make targets: ${{ inputs.make_targets }}"
           echo "Building version: ${VERSION}"
-          echo "which replaces version: ${PREVIOUS_VERSION}"
-          echo "Lower skip range bound: ${SKIP_RANGE_LOWER}"
+          echo "which replaces version (optional): ${PREVIOUS_VERSION}"
+          echo "Lower skip range bound (optional): ${SKIP_RANGE_LOWER}"
+          echo "OCP version (optional): ${OCP_VERSION}"
 
       - name: Checkout code
         uses: actions/checkout@v3
@@ -82,6 +87,7 @@ jobs:
           export VERSION=${VERSION} 
           export PREVIOUS_VERSION=${PREVIOUS_VERSION}
           export SKIP_RANGE_LOWER=${SKIP_RANGE_LOWER}
+          export OCP_VERSION=${OCP_VERSION}
           rm -r operator/bundle && make -C operator ${{ inputs.make_targets }}
 
       - name: Copy bundle
