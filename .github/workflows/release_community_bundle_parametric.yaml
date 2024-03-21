@@ -18,8 +18,9 @@ on:
         required: false
         type: string 
       ocp_version:
-       description: "The target OCP version for the release (mandatory for OKD community)"
-       required: false
+        description: "The target OCP version for the release (mandatory for OKD community)"
+        required: false
+        type: string 
       community:
         description: "The community to release the bundle to (either `K8S` or `OKD`)"
         required: true
