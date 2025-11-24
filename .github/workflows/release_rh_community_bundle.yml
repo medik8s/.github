@@ -73,11 +73,11 @@ jobs:
         run: |
           git -C rhcommunity remote add fork https://github.com/medik8s/community-operators-prod.git
           OPERATOR_NAME=$(basename ${PROJECT})
-          BRANCH=add-${OPERATOR_NAME}-${VERSION}
+          BRANCH=add-${OPERATOR_NAME}-${VERSION}-okd
           git -C rhcommunity config --global user.name "Medik8s Team"
           git -C rhcommunity config --global user.email "medik8s@googlegroups.com"
           git -C rhcommunity add operators/${OPERATOR_NAME}/${VERSION}
           git -C rhcommunity switch --create ${BRANCH}
           git -C rhcommunity status
-          git -C rhcommunity commit -m "Add ${OPERATOR_NAME}-${VERSION}"
+          git -C rhcommunity commit -m "operator ${OPERATOR_NAME} (${VERSION})"
           git -C rhcommunity push --set-upstream fork ${BRANCH}
