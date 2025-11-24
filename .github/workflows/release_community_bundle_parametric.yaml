@@ -36,7 +36,7 @@ permissions:
 jobs:
   make_community_bundle:
     name: Build and commit PR for bundle in Operator Community
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     env:
       PROJECT: ${{ github.repository }}
       VERSION: ${{ inputs.version }}
@@ -54,18 +54,18 @@ jobs:
           echo "OCP version (optional): ${OCP_VERSION}"
 
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v6
         with:
           path: operator
           fetch-depth: 0
 
       - name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v6
         with:
           go-version-file: operator/go.mod
 
       - name: Checkout Kubernetes Community Operators Hub
-        uses: actions/checkout@v3
+        uses: actions/checkout@v6
         if: ${{ inputs.community == 'K8S' }}
         with:
           repository: 'k8s-operatorhub/community-operators'
@@ -74,7 +74,7 @@ jobs:
           fetch-depth: 0
 
       - name: Checkout Red Hat Community Operators
-        uses: actions/checkout@v3
+        uses: actions/checkout@v6
         if: ${{ inputs.community == 'OKD' }}
         with:
           repository: 'redhat-openshift-ecosystem/community-operators-prod'
