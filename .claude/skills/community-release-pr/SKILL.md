@@ -24,6 +24,7 @@ Ask the user for the following before proceeding:
 | NMO | `medik8s/node-maintenance-operator` | `release.yaml` | |
 | NHC | `medik8s/node-healthcheck-operator` | `release.yaml` | Requires `skip_range_lower` |
 | MDR | `medik8s/machine-deletion-remediation` | `release.yaml` | OKD only (skip for K8S) |
+| SBR | `medik8s/storage-based-remediation` | N/A | No release workflow yet; skip until one is added |
 
 ## Workflow
 
