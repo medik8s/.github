@@ -84,6 +84,7 @@ capture_run_id() {
     local run_id
     run_id=$(gh run list --repo "medik8s/${repo}" --workflow="$workflow" --limit 1 --json databaseId --jq '.[0].databaseId')
     if [[ -n "$run_id" ]]; then
+        # run_ids and run_repos are caller-declared arrays used as return values
         run_ids+=("$run_id")
         run_repos+=("medik8s/${repo}")
         info "[$op] ${label} workflow run: https://github.com/medik8s/${repo}/actions/runs/${run_id}"
@@ -93,8 +94,8 @@ capture_run_id() {
 }
 
 version_lt() {
-    local -a a b
-    local i
+    local -a a b  # arrays for version components
+    local i        # loop counter — cannot use -a here (scalar, not array)
     IFS=. read -ra a <<< "$1"
     IFS=. read -ra b <<< "$2"
     for i in 0 1 2; do

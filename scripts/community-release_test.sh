@@ -147,7 +147,7 @@ SNR_RELEASE='releases:
     version: "0.99.0"
     previous: "0.98.0"'
 
-# ── 1. Upstream tag already exists → skip, no git calls ─────────────────────
+# ── Upstream tag already exists → skip, no git calls ────────────────────────
 
 test_tag_exists_upstream() {
     local mock_dir
@@ -177,7 +177,7 @@ MOCK
     assert_output_contains "skipped summary" "$output" "Skipped (already existed):.*SNR" || return 1
 }
 
-# ── 2. Downstream tag missing → fail with prerequisite message ──────────────
+# ── Downstream tag missing → fail with prerequisite message ─────────────────
 
 test_downstream_tag_missing() {
     local mock_dir
@@ -212,7 +212,7 @@ MOCK
 # - Downstream (GitLab) clone uses: git clone ... → mocked via git mock
 # - Upstream (GitHub) clone uses: gh repo clone ... → mocked via gh mock
 
-# ── 3. Partial operators: only SNR configured → only SNR processed ──────────
+# ── Partial operators: only SNR configured → only SNR processed ─────────────
 
 test_partial_operator_set() {
     local mock_dir
@@ -260,7 +260,7 @@ MOCK
     fi
 }
 
-# ── 4. Mixed: one tag exists upstream, another needs downstream clone ────────
+# ── Mixed: one tag exists upstream, another needs downstream clone ───────────
 
 test_mixed_tags_exist_and_missing() {
     local mock_dir
@@ -303,7 +303,7 @@ MOCK
     assert_output_contains "FAR downstream error" "$output" "Downstream tag v0.7.0 does not exist on dragonfly/fence-agents-remediation" || return 1
 }
 
-# ── 5. Upstream commit missing → fail with clear message ─────────────────────
+# ── Upstream commit missing → fail with clear message ────────────────────────
 
 test_upstream_commit_missing() {
     local mock_dir
@@ -364,7 +364,7 @@ MOCK
     assert_output_contains "force-push hint" "$output" "force-pushed or rebased" || return 1
 }
 
-# ── 6. Downstream version differs from upstream ─────────────────────────────
+# ── Downstream version differs from upstream ────────────────────────────────
 
 test_tag_with_downstream_version() {
     local mock_dir
@@ -413,7 +413,7 @@ MOCK
 # validate_config tests
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# ── 7. Invalid target → fail ────────────────────────────────────────────────
+# ── Invalid target → fail ───────────────────────────────────────────────────
 
 test_validate_invalid_target() {
     local mock_dir
@@ -433,7 +433,7 @@ test_validate_invalid_target() {
     assert_output_contains "target error" "$output" "invalid target" || return 1
 }
 
-# ── 8. Missing ocp_version when targets includes okd → fail ────────────────
+# ── Missing ocp_version when targets includes okd → fail ───────────────────
 
 test_validate_missing_ocp_version() {
     local mock_dir
@@ -452,7 +452,7 @@ test_validate_missing_ocp_version() {
     assert_output_contains "ocp_version error" "$output" "ocp_version is required" || return 1
 }
 
-# ── 10. Missing previous → fail ─────────────────────────────────────────────
+# ── Missing previous → fail ────────────────────────────────────────────────
 
 test_validate_missing_previous() {
     local mock_dir
@@ -470,7 +470,7 @@ test_validate_missing_previous() {
     assert_output_contains "previous error" "$output" "previous is required" || return 1
 }
 
-# ── 11. No releases → fail ──────────────────────────────────────────────────
+# ── No releases → fail ─────────────────────────────────────────────────────
 
 test_validate_no_releases() {
     local mock_dir
@@ -485,7 +485,7 @@ test_validate_no_releases() {
     assert_output_contains "no releases error" "$output" "No release entries" || return 1
 }
 
-# ── 12. Previous >= version → fail ──────────────────────────────────────────
+# ── Previous >= version → fail ─────────────────────────────────────────────
 
 test_validate_previous_higher_than_version() {
     local mock_dir
@@ -504,7 +504,7 @@ test_validate_previous_higher_than_version() {
     assert_output_contains "version order" "$output" "previous (0.11.0) must be lower than version (0.10.0)" || return 1
 }
 
-# ── 13. Previous == version → fail ──────────────────────────────────────────
+# ── Previous == version → fail ─────────────────────────────────────────────
 
 test_validate_previous_equals_version() {
     local mock_dir
@@ -523,7 +523,7 @@ test_validate_previous_equals_version() {
     assert_output_contains "version order" "$output" "previous (0.7.0) must be lower than version (0.7.0)" || return 1
 }
 
-# ── 14. Patch bump → pass ───────────────────────────────────────────────────
+# ── Patch bump → pass ──────────────────────────────────────────────────────
 
 test_validate_patch_bump_ok() {
     local mock_dir
@@ -542,7 +542,7 @@ test_validate_patch_bump_ok() {
     assert_output_contains "SNR in summary" "$output" "SNR" || return 1
 }
 
-# ── 15. Previous tag missing on GitHub → fail ────────────────────────────────
+# ── Previous tag missing on GitHub → fail ───────────────────────────────────
 
 test_validate_previous_tag_missing_github() {
     local mock_dir
@@ -577,7 +577,7 @@ MOCK
     assert_output_contains "github tag error" "$output" "previous version tag v0.11.0 does not exist on medik8s/self-node-remediation" || return 1
 }
 
-# ── 16. Previous image missing on quay.io → fail ────────────────────────────
+# ── Previous image missing on quay.io → fail ───────────────────────────────
 
 test_validate_previous_image_missing_quay() {
     local mock_dir
@@ -614,7 +614,7 @@ MOCK
     assert_output_contains "quay image error" "$output" "self-node-remediation-operator:v0.11.0.*not found" || return 1
 }
 
-# ── 17. Previous bundle image missing on quay.io → fail ──────────────────────
+# ── Previous bundle image missing on quay.io → fail ─────────────────────────
 
 test_validate_previous_bundle_missing_quay() {
     local mock_dir
@@ -655,7 +655,7 @@ MOCK
     assert_output_contains "bundle error" "$output" "self-node-remediation-operator-bundle:v0.11.0.*not found" || return 1
 }
 
-# ── 18. Unknown operator → fail ──────────────────────────────────────────────
+# ── Unknown operator → fail ─────────────────────────────────────────────────
 
 test_validate_unknown_operator() {
     local mock_dir
@@ -684,7 +684,7 @@ BUILD_YAML='releases:
     previous: "0.11.0"
     targets: [k8s]'
 
-# ── 19. build_and_push skips operator when images already exist on quay ──────
+# ── build_and_push skips operator when images already exist on quay ──────────
 
 test_build_skip_when_images_exist() {
     local mock_dir
@@ -718,7 +718,7 @@ MOCK
     assert_output_contains "skip message" "$output" "already exist.*skipping build_and_push" || return 1
 }
 
-# ── 20. build_and_push proceeds when RELEASE_NEEDS_BUILD=yes ─────────────────
+# ── build_and_push proceeds when RELEASE_NEEDS_BUILD=yes ────────────────────
 
 test_build_proceeds_when_needed() {
     local mock_dir
@@ -753,7 +753,7 @@ MOCK
     assert_output_not_contains "no skip" "$output" "skipping build_and_push" || return 1
 }
 
-# ── 21. build_and_push partial: user declines → skip ─────────────────────────
+# ── build_and_push partial: user declines → skip ────────────────────────────
 
 test_build_partial_user_declines() {
     local mock_dir
@@ -798,7 +798,7 @@ if [[ "$1" == "api" && "$2" == repos/*/contents/operators/* ]]; then exit 1; fi
 if [[ "$1" == "api" && "$2" == repos/medik8s/*/git/refs/heads/* ]]; then echo '"'"'{"ref":"found"}'"'"'; exit 0; fi
 echo "unexpected gh call: $*" >&2; exit 1'
 
-# ── 22. MDR with okd-only targets excluded from K8S ──────────────────────────
+# ── MDR with okd-only targets excluded from K8S ─────────────────────────────
 
 test_mdr_excluded_for_k8s() {
     local mock_dir
@@ -827,7 +827,7 @@ test_mdr_excluded_for_k8s() {
     assert_output_not_contains "MDR no K8S" "$output" "k8s-operatorhub.*machine-deletion-remediation" || return 1
 }
 
-# ── 23. MDR included for OKD target ──────────────────────────────────────────
+# ── MDR included for OKD target ─────────────────────────────────────────────
 
 test_mdr_included_for_okd() {
     local mock_dir
@@ -852,7 +852,7 @@ test_mdr_included_for_okd() {
     assert_output_not_contains "MDR no K8S" "$output" "k8s-operatorhub.*machine-deletion-remediation" || return 1
 }
 
-# ── 24. Both targets → K8S uses -k8s suffix, OKD uses -okd-{ocp} suffix ─────
+# ── Both targets → K8S uses -k8s suffix, OKD uses -okd-{ocp} suffix ────────
 
 test_branch_suffixes_for_both() {
     local mock_dir
@@ -875,7 +875,7 @@ test_branch_suffixes_for_both() {
     assert_output_contains "OKD branch" "$output" "add-self-node-remediation-0.12.0-okd-4.21" || return 1
 }
 
-# ── 25. Existing PR → skip creation ──────────────────────────────────────────
+# ── Existing PR → skip creation ─────────────────────────────────────────────
 
 test_pr_already_exists() {
     local mock_dir
@@ -912,7 +912,7 @@ MOCK
     assert_output_contains "PR URL shown" "$output" "pull/42" || return 1
 }
 
-# ── 26. Already released version → skip PR creation ──────────────────────────
+# ── Already released version → skip PR creation ─────────────────────────────
 
 test_version_already_released() {
     local mock_dir
@@ -954,7 +954,7 @@ MOCK
     assert_output_not_contains "no warning" "$output" "WARNING" || return 1
 }
 
-# ── 27. Already released but replaces mismatch → warn ────────────────────────
+# ── Already released but replaces mismatch → warn ───────────────────────────
 
 test_version_released_replaces_mismatch() {
     local mock_dir
@@ -998,7 +998,7 @@ MOCK
 # Multi-version tests
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# ── 28. Two versions of same operator → both processed ───────────────────────
+# ── Two versions of same operator → both processed ──────────────────────────
 
 test_multi_version_same_operator() {
     local mock_dir
@@ -1036,7 +1036,7 @@ MOCK
     assert_output_contains "SNR 0.11.1" "$output" '\[SNR 0.11.1\]' || return 1
 }
 
-# ── 29. Default targets → both k8s and okd ───────────────────────────────────
+# ── Default targets → both k8s and okd ──────────────────────────────────────
 
 test_default_targets() {
     local mock_dir
