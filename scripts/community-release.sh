@@ -458,7 +458,8 @@ build_and_push() {
         [[ "$DRY_RUN" == true ]] || info "[$op $version] Triggering build_and_push_images on medik8s/$repo"
         run gh workflow run "$workflow" \
             --repo "medik8s/${repo}" \
-            --ref "$tag" \
+            --ref main \
+            -f "checkout_ref=${tag}" \
             -f operation=build_and_push_images \
             -f "version=${version}" \
             -f "previous_version=${previous}" \
@@ -496,7 +497,8 @@ trigger_community_workflow() {
     [[ "$DRY_RUN" == true ]] || info "[$op $version] Triggering $operation on medik8s/$repo"
     run gh workflow run "$workflow" \
         --repo "medik8s/${repo}" \
-        --ref "$tag" \
+        --ref main \
+        -f "checkout_ref=${tag}" \
         -f "operation=${operation}" \
         -f "version=${version}" \
         -f "previous_version=${previous}" \

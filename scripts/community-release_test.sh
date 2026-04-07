@@ -750,6 +750,8 @@ MOCK
 
     [[ $rc -eq 0 ]] || { echo "    Expected exit 0, got $rc"; echo "    Output: $output"; return 1; }
     assert_output_contains "workflow triggered" "$output" "gh workflow run release.yml" || return 1
+    assert_output_contains "ref main" "$output" "ref main" || return 1
+    assert_output_contains "checkout_ref" "$output" "checkout_ref=v0.12.0" || return 1
     assert_output_not_contains "no skip" "$output" "skipping build_and_push" || return 1
 }
 
