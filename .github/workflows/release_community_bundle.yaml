@@ -2,7 +2,9 @@ name: Community bundle
 on:
   workflow_call:
     secrets:
-      COMMUNITY_OPERATOR_TOKEN:
+      RELEASE_APP_ID:
+        required: true
+      RELEASE_APP_PRIVATE_KEY:
         required: true
     inputs:
       version:
@@ -80,13 +82,21 @@ jobs:
         with:
           go-version-file: operator/go.mod
 
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: medik8s
+
       - name: Checkout Kubernetes Community Operators Hub
         uses: actions/checkout@v6
         if: ${{ inputs.community == 'K8S' }}
         with:
           repository: 'k8s-operatorhub/community-operators'
           path: community
-          token: ${{ secrets.COMMUNITY_OPERATOR_TOKEN }}
+          token: ${{ steps.app-token.outputs.token }}
           fetch-depth: 0
 
       - name: Checkout Red Hat Community Operators
@@ -95,7 +105,7 @@ jobs:
         with:
           repository: 'redhat-openshift-ecosystem/community-operators-prod'
           path: community
-          token: ${{ secrets.COMMUNITY_OPERATOR_TOKEN }}
+          token: ${{ steps.app-token.outputs.token }}
           fetch-depth: 0
 
       - name: Build Community bundle
