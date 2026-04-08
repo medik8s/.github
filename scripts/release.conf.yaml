@@ -1,0 +1,53 @@
+# Community release configuration.
+# Each entry in 'releases' represents one operator version to release.
+#
+# Required fields:
+#   operator  - Short name: SNR, FAR, NMO, NHC, MDR
+#   version   - Version to release (without leading 'v', must be quoted)
+#   previous  - Previous version in the upgrade chain
+#
+# Optional fields:
+#   targets            - List of targets: [k8s, okd] (default: [k8s, okd])
+#   ocp_version        - OCP version for OKD (required when targets includes okd)
+#   downstream_version - Downstream version tag (defaults to version; use when downstream
+#                        versioning differs, e.g. NMO upstream 0.20.0 = downstream 5.6.0)
+#   skip_range_lower   - OLM skipRange lower bound
+#   commit             - Override upstream commit SHA (skips downstream submodule lookup)
+#
+# Multiple entries for the same operator are supported (e.g., releasing
+# two different versions of SNR in the same batch).
+
+releases:
+#  - operator: NHC
+#    version: "0.10.3"
+#    previous: "0.10.0"
+#    ocp_version: "4.20"
+#    skip_range_lower: "0.9.0"
+
+  - operator: SNR
+    version: "0.11.1"
+    previous: "0.11.0"
+    ocp_version: "4.20"
+
+  - operator: SNR
+    version: "0.12.1"
+    previous: "0.12.0"
+    ocp_version: "4.21"
+
+  - operator: FAR
+    version: "0.6.1"
+    previous: "0.6.0"
+    ocp_version: "4.20"
+
+  - operator: NMO
+    version: "0.20.1"
+    previous: "0.20.0"
+    downstream_version: "5.6.1"
+    ocp_version: "4.21"
+
+#  - operator: MDR
+#    version: "0.6.0"
+#    previous: "0.5.0"
+#    targets: [okd]
+#    ocp_version: "4.21"
+#    skip_range_lower: "0.5.0"

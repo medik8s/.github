@@ -29,6 +29,10 @@ on:
         description: "The Makefile targets to use for creating the community bundle"
         required: true
         type: string
+      checkout_ref:
+        description: "Override the ref to checkout (defaults to the triggering ref)"
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -67,6 +71,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
         with:
+          ref: ${{ inputs.checkout_ref || github.ref }}
           path: operator
           fetch-depth: 0
 

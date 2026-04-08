@@ -4,44 +4,17 @@
 # Usage:
 #   ./community-release.sh [--dry-run] [--step tag|build|community|prs] <config-file>
 #
-# Config file is a bash-sourceable key=value file. See release.conf.example for format.
+# Config file is a YAML file. See release.conf.yaml.example for format.
 
 set -euo pipefail
 
-# ── Operator matrix ──────────────────────────────────────────────────────────
-# Each operator is keyed by short name. Only OP_REPO, OP_K8S, and OP_OKD are
-# declared statically. OP_DISPLAY, OP_QUAY_IMAGE, and OP_WORKFLOW are derived
-# at runtime via init_operator_metadata() and detect_release_workflows().
-
-declare -a OPERATORS=(SNR FAR NMO NHC MDR)
-
+# ── Operator repository mapping ──────────────────────────────────────────────
 declare -A OP_REPO=(
     [SNR]=self-node-remediation
     [FAR]=fence-agents-remediation
     [NMO]=node-maintenance-operator
     [NHC]=node-healthcheck-operator
     [MDR]=machine-deletion-remediation
-)
-
-declare -A OP_K8S=(
-    [SNR]=yes [FAR]=yes [NMO]=yes [NHC]=yes [MDR]=no
-)
-
-declare -A OP_OKD=(
-    [SNR]=yes [FAR]=yes [NMO]=yes [NHC]=yes [MDR]=yes
-)
-
-declare -A NMO_DOWNSTREAM_VERSION=(
-    [0.20.0]=5.6.0
-    [0.19.0]=5.5.0
-    [0.18.1]=5.4.1
-    [0.18.0]=5.4.0
-    [0.17.0]=5.3.0
-    [0.16.1]=5.2.1
-    [0.16.0]=5.2.0
-    [0.15.0]=5.1.0
-    [0.14.1]=5.0.1
-    [0.14.0]=5.0.0
 )
 
 declare -A OP_DISPLAY=()
@@ -52,14 +25,10 @@ DRY_RUN=false
 STEP=all          # tag, build, community, prs, or all
 CONFIG_FILE=""
 
-TARGET=""
-OCP_VERSION=""
-
-declare -A OP_VERSION=()
-declare -A OP_PREVIOUS=()
-declare -A OP_COMMIT=()
-declare -A OP_NEEDS_BUILD=()
-NHC_SKIP_RANGE_LOWER=""
+# ── Config state ─────────────────────────────────────────────────────────────
+CONFIG_YAML=""
+RELEASE_COUNT=0
+declare -a RELEASE_NEEDS_BUILD=()   # runtime-computed, not from config
 
 declare -a PR_URLS=()
 
@@ -68,6 +37,38 @@ step()  { printf "\n==> Step: %s\n" "$*"; }
 info()  { echo "    $*"; }
 warn()  { echo "WARNING: $*" >&2; }
 die()   { echo "ERROR: $*" >&2; exit 1; }
+
+# ── Config accessors ─────────────────────────────────────────────────────────
+
+release_field() {
+    echo "$CONFIG_YAML" | yq e ".releases[$1].$2 // \"\""
+}
+
+release_targets() {
+    echo "$CONFIG_YAML" | yq e '(.releases['"$1"'].targets // ["k8s","okd"]) | join(" ")'
+}
+
+release_ocp_version() {
+    echo "$CONFIG_YAML" | yq e ".releases[$1].ocp_version // \"\""
+}
+
+release_downstream_version() {
+    echo "$CONFIG_YAML" | yq e ".releases[$1].downstream_version // .releases[$1].version"
+}
+
+release_targets_k8s() {
+    local targets
+    targets=$(release_targets "$1")
+    [[ " $targets " == *" k8s "* ]]
+}
+
+release_targets_okd() {
+    local targets
+    targets=$(release_targets "$1")
+    [[ " $targets " == *" okd "* ]]
+}
+
+# ── Utilities ────────────────────────────────────────────────────────────────
 
 run() {
     if [[ "$DRY_RUN" == true ]]; then
@@ -83,6 +84,7 @@ capture_run_id() {
     local run_id
     run_id=$(gh run list --repo "medik8s/${repo}" --workflow="$workflow" --limit 1 --json databaseId --jq '.[0].databaseId')
     if [[ -n "$run_id" ]]; then
+        # run_ids and run_repos are caller-declared arrays used as return values
         run_ids+=("$run_id")
         run_repos+=("medik8s/${repo}")
         info "[$op] ${label} workflow run: https://github.com/medik8s/${repo}/actions/runs/${run_id}"
@@ -91,16 +93,9 @@ capture_run_id() {
     fi
 }
 
-target_includes_k8s() {
-    [[ "$TARGET" == "k8s" || "$TARGET" == "both" ]]
-}
-
-target_includes_okd() {
-    [[ "$TARGET" == "okd" || "$TARGET" == "both" ]]
-}
-
 version_lt() {
-    local -a a b
+    local -a a b  # arrays for version components
+    local i        # loop counter — cannot use -a here (scalar, not array)
     IFS=. read -ra a <<< "$1"
     IFS=. read -ra b <<< "$2"
     for i in 0 1 2; do
@@ -119,7 +114,7 @@ quay_tag_exists() {
     local response
     response=$(curl -sf "https://quay.io/api/v1/repository/medik8s/${repo}/tag/?specificTag=${tag}&onlyActiveTags=true" 2>/dev/null) || return 1
     local count
-    count=$(echo "$response" | jq '.tags | length' 2>/dev/null) || return 1
+    count=$(echo "$response" | yq e '.tags | length' 2>/dev/null) || return 1
     [[ "$count" -gt 0 ]]
 }
 
@@ -150,17 +145,30 @@ community_branch_exists() {
     gh api "repos/${1}/git/refs/heads/${2}" &>/dev/null
 }
 
-active_operators() {
-    for op in "${OPERATORS[@]}"; do
-        if [[ -n "${OP_VERSION[$op]:-}" ]]; then
-            echo "$op"
-        fi
-    done
+# ── Config loading ───────────────────────────────────────────────────────────
+
+parse_yaml_config() {
+    if [[ ! -f "$CONFIG_FILE" ]]; then
+        die "Config file not found: $CONFIG_FILE"
+    fi
+
+    CONFIG_YAML=$(cat "$CONFIG_FILE")
+    RELEASE_COUNT=$(echo "$CONFIG_YAML" | yq e '.releases | length' 2>/dev/null) || die "Invalid YAML config file: $CONFIG_FILE"
+    if [[ "$RELEASE_COUNT" -eq 0 || "$RELEASE_COUNT" == "null" ]]; then
+        die "No release entries in config. Nothing to do."
+    fi
 }
 
 init_operator_metadata() {
-    for op in $(active_operators); do
-        local repo="${OP_REPO[$op]}"
+    local -A seen=()
+    for ((i=0; i<RELEASE_COUNT; i++)); do
+        local op
+        op=$(release_field "$i" operator)
+        [[ -z "${seen[$op]:-}" ]] || continue
+        seen[$op]=1
+
+        local repo="${OP_REPO[$op]:-}"
+        [[ -n "$repo" ]] || die "Unknown operator: $op"
 
         if [[ "$repo" == *-operator ]]; then
             OP_QUAY_IMAGE[$op]="$repo"
@@ -179,7 +187,13 @@ init_operator_metadata() {
 }
 
 detect_release_workflows() {
-    for op in $(active_operators); do
+    local -A seen=()
+    for ((i=0; i<RELEASE_COUNT; i++)); do
+        local op
+        op=$(release_field "$i" operator)
+        [[ -z "${seen[$op]:-}" ]] || continue
+        seen[$op]=1
+
         local repo="${OP_REPO[$op]}"
         if gh api "repos/medik8s/${repo}/contents/.github/workflows/release.yml" &>/dev/null; then
             OP_WORKFLOW[$op]="release.yml"
@@ -191,10 +205,12 @@ detect_release_workflows() {
     done
 }
 
+# ── Validation ───────────────────────────────────────────────────────────────
+
 validate_config() {
     log "Validating configuration"
 
-    for cmd in gh git jq curl; do
+    for cmd in gh git curl yq; do
         if ! command -v "$cmd" &>/dev/null; then
             die "'$cmd' is required but not found in PATH"
         fi
@@ -206,189 +222,192 @@ validate_config() {
     fi
     info "GitHub (gh) CLI: OK"
 
-    if [[ ! -f "$CONFIG_FILE" ]]; then
-        die "Config file not found: $CONFIG_FILE"
-    fi
-    # shellcheck source=/dev/null
-    source "$CONFIG_FILE"
+    parse_yaml_config
 
-    for op in "${OPERATORS[@]}"; do
-        local ver_var="${op}_VERSION"
-        local prev_var="${op}_PREVIOUS"
-        local commit_var="${op}_COMMIT"
-        OP_VERSION[$op]="${!ver_var:-}"
-        OP_PREVIOUS[$op]="${!prev_var:-}"
-        OP_COMMIT[$op]="${!commit_var:-}"
+    for ((i=0; i<RELEASE_COUNT; i++)); do
+        local op version previous
+        op=$(release_field "$i" operator)
+        version=$(release_field "$i" version)
+        previous=$(release_field "$i" previous)
+
+        if [[ -z "${OP_REPO[$op]:-}" ]]; then
+            die "releases[$i]: unknown operator '$op'"
+        fi
+
+        if [[ -z "$version" || "$version" == "null" ]]; then
+            die "releases[$i] ($op): version is required"
+        fi
+
+        if [[ -z "$previous" || "$previous" == "null" ]]; then
+            die "releases[$i] ($op): previous is required"
+        fi
+
+        if ! version_lt "$previous" "$version"; then
+            die "releases[$i] ($op): previous ($previous) must be lower than version ($version)"
+        fi
+
+        local targets
+        targets=$(release_targets "$i")
+        for t in $targets; do
+            case "$t" in
+                k8s|okd) ;;
+                *) die "releases[$i] ($op): invalid target '$t' (must be k8s or okd)" ;;
+            esac
+        done
+
+        if release_targets_okd "$i" && [[ -z "$(release_ocp_version "$i")" ]]; then
+            die "releases[$i] ($op): ocp_version is required when targets includes okd"
+        fi
+
+        local srl
+        srl=$(release_field "$i" skip_range_lower)
+
+        local repo="${OP_REPO[$op]}"
+        local quay_image="${OP_QUAY_IMAGE[$op]:-}"
+        [[ -n "$quay_image" ]] || {
+            if [[ "$repo" == *-operator ]]; then quay_image="$repo"; else quay_image="${repo}-operator"; fi
+        }
+        local prev_tag="v${previous}"
+        local ver_tag="v${version}"
+
+        if ! gh_tag_exists "medik8s/${repo}" "$prev_tag"; then
+            die "releases[$i] ($op): previous version tag $prev_tag does not exist on medik8s/${repo}"
+        fi
+
+        if [[ "$STEP" != "tag" ]]; then
+            local bundle_image="${quay_image}-bundle"
+            if ! quay_tag_exists "$quay_image" "$prev_tag" || ! quay_tag_exists "$bundle_image" "$prev_tag"; then
+                die "releases[$i] ($op): previous version images quay.io/medik8s/${quay_image}:${prev_tag} or quay.io/medik8s/${bundle_image}:${prev_tag} not found"
+            fi
+
+            local has_operator has_bundle
+            has_operator=$(quay_tag_exists "$quay_image" "$ver_tag" && echo yes || echo no)
+            has_bundle=$(quay_tag_exists "$bundle_image" "$ver_tag" && echo yes || echo no)
+
+            if [[ "$has_operator" == "yes" && "$has_bundle" == "yes" ]]; then
+                info "releases[$i] ($op): images quay.io/medik8s/${quay_image}:${ver_tag} and bundle already exist — build_and_push will be skipped"
+                RELEASE_NEEDS_BUILD[$i]=no
+            elif [[ "$has_operator" == "yes" || "$has_bundle" == "yes" ]]; then
+                warn "releases[$i] ($op): partial build detected: operator=${has_operator} bundle=${has_bundle} on quay.io for ${ver_tag}"
+                RELEASE_NEEDS_BUILD[$i]=partial
+            else
+                RELEASE_NEEDS_BUILD[$i]=yes
+            fi
+        fi
     done
-    NHC_SKIP_RANGE_LOWER="${NHC_SKIP_RANGE_LOWER:-}"
 
     init_operator_metadata
     detect_release_workflows
 
-    case "$TARGET" in
-        k8s|okd|both) ;;
-        *) die "TARGET must be 'k8s', 'okd', or 'both' (got: '$TARGET')" ;;
-    esac
-
-    if target_includes_okd && [[ -z "$OCP_VERSION" ]]; then
-        die "OCP_VERSION is required when TARGET includes OKD"
-    fi
-
-    local active_count=0
-    for op in "${OPERATORS[@]}"; do
-        if [[ -z "${OP_VERSION[$op]}" ]]; then
-            continue
-        fi
-        active_count=$((active_count + 1))
-
-        if [[ -z "${OP_PREVIOUS[$op]}" ]]; then
-            die "${op}_PREVIOUS is required when ${op}_VERSION is set"
-        fi
-
-        if ! version_lt "${OP_PREVIOUS[$op]}" "${OP_VERSION[$op]}"; then
-            die "${op}_PREVIOUS (${OP_PREVIOUS[$op]}) must be lower than ${op}_VERSION (${OP_VERSION[$op]})"
-        fi
-
-        if [[ "$op" == "NHC" && -z "$NHC_SKIP_RANGE_LOWER" ]]; then
-            die "NHC_SKIP_RANGE_LOWER is required when NHC_VERSION is set"
-        fi
-
-        local repo="${OP_REPO[$op]}"
-        local quay_image="${OP_QUAY_IMAGE[$op]}"
-        local prev_tag="v${OP_PREVIOUS[$op]}"
-        local ver_tag="v${OP_VERSION[$op]}"
-
-        if ! gh_tag_exists "medik8s/${repo}" "$prev_tag"; then
-            die "[$op] Previous version tag $prev_tag does not exist on medik8s/${repo}. Cannot use ${OP_PREVIOUS[$op]} as previous_version."
-        fi
-
-        local bundle_image="${quay_image}-bundle"
-        if ! quay_tag_exists "$quay_image" "$prev_tag" || ! quay_tag_exists "$bundle_image" "$prev_tag"; then
-            die "[$op] Previous version images quay.io/medik8s/${quay_image}:${prev_tag} or quay.io/medik8s/${bundle_image}:${prev_tag} not found. The previous release may not have been fully built and pushed."
-        fi
-
-        local has_operator has_bundle
-        has_operator=$(quay_tag_exists "$quay_image" "$ver_tag" && echo yes || echo no)
-        has_bundle=$(quay_tag_exists "$bundle_image" "$ver_tag" && echo yes || echo no)
-
-        if [[ "$has_operator" == "yes" && "$has_bundle" == "yes" ]]; then
-            info "[$op] Images quay.io/medik8s/${quay_image}:${ver_tag} and bundle already exist — build_and_push will be skipped"
-            OP_NEEDS_BUILD[$op]=no
-        elif [[ "$has_operator" == "yes" || "$has_bundle" == "yes" ]]; then
-            warn "[$op] Partial build detected: operator=${has_operator} bundle=${has_bundle} on quay.io for ${ver_tag}"
-            OP_NEEDS_BUILD[$op]=partial
-        else
-            OP_NEEDS_BUILD[$op]=yes
-        fi
-    done
-
-    if [[ $active_count -eq 0 ]]; then
-        die "No operators have versions set. Nothing to do."
-    fi
-
     log "Configuration summary"
-    info "TARGET:      $TARGET"
-    if target_includes_okd; then
-        info "OCP_VERSION: $OCP_VERSION"
-    fi
     echo ""
-    printf "    %-10s %-10s %-10s %s\n" "OPERATOR" "VERSION" "PREVIOUS" "EXTRA"
-    printf "    %-10s %-10s %-10s %s\n" "--------" "-------" "--------" "-----"
-    for op in "${OPERATORS[@]}"; do
-        if [[ -n "${OP_VERSION[$op]}" ]]; then
-            local extra=""
-            if [[ "$op" == "NHC" ]]; then
-                extra="skip_range_lower=$NHC_SKIP_RANGE_LOWER"
-            fi
-            printf "    %-10s %-10s %-10s %s\n" "$op" "${OP_VERSION[$op]}" "${OP_PREVIOUS[$op]}" "$extra"
-        fi
+    printf "    %-6s %-10s %-10s %-10s %-12s %s\n" "OP" "VERSION" "PREVIOUS" "TARGETS" "OCP_VERSION" "EXTRA"
+    printf "    %-6s %-10s %-10s %-10s %-12s %s\n" "----" "-------" "--------" "-------" "-----------" "-----"
+    for ((i=0; i<RELEASE_COUNT; i++)); do
+        local op version targets ocp_version ds_ver srl commit extra
+        op=$(release_field "$i" operator)
+        version=$(release_field "$i" version)
+        targets=$(release_targets "$i")
+        ocp_version=$(release_ocp_version "$i")
+        ds_ver=$(release_downstream_version "$i")
+        srl=$(release_field "$i" skip_range_lower)
+        commit=$(release_field "$i" commit)
+        extra=""
+        [[ -z "$srl" ]] || extra="skip_range_lower=${srl}"
+        [[ "$ds_ver" == "$version" ]] || extra="${extra:+$extra }downstream=${ds_ver}"
+        [[ -z "$commit" ]] || extra="${extra:+$extra }commit=${commit}"
+        printf "    %-6s %-10s %-10s %-10s %-12s %s\n" \
+            "$op" "$version" "$(release_field "$i" previous)" \
+            "$targets" "$ocp_version" "$extra"
     done
     echo ""
 }
+
+# ── Steps ────────────────────────────────────────────────────────────────────
 
 tag_upstream() {
     step "tag_upstream — creating upstream tags from downstream submodule commits"
 
     local tagged=() skipped=()
 
-    for op in $(active_operators); do
+    for ((i=0; i<RELEASE_COUNT; i++)); do
+        local op version
+        op=$(release_field "$i" operator)
+        version=$(release_field "$i" version)
         local repo="${OP_REPO[$op]}"
-        local version="${OP_VERSION[$op]}"
         local display="${OP_DISPLAY[$op]}"
         local tag="v${version}"
 
-        local downstream_tag="$tag"
-        if [[ "$op" == "NMO" ]]; then
-            local downstream_version="${NMO_DOWNSTREAM_VERSION[$version]:-}"
-            if [[ -z "$downstream_version" ]]; then
-                die "[$op] No downstream version mapping for upstream ${version}. Add it to NMO_DOWNSTREAM_VERSION."
-            fi
-            downstream_tag="v${downstream_version}"
-            info "[$op] Downstream tag: $downstream_tag (upstream: $tag)"
+        local downstream_version
+        downstream_version=$(release_downstream_version "$i")
+        local downstream_tag="v${downstream_version}"
+        if [[ "$downstream_version" != "$version" ]]; then
+            info "[$op $version] Downstream tag: $downstream_tag (upstream: $tag)"
         fi
 
-        info "[$op] Checking tag $tag on medik8s/$repo"
+        info "[$op $version] Checking tag $tag on medik8s/$repo"
 
         if gh_tag_exists "medik8s/${repo}" "$tag"; then
-            info "[$op] Tag $tag already exists on medik8s/$repo — skipping tagging"
-            skipped+=("$op")
+            info "[$op $version] Tag $tag already exists on medik8s/$repo — skipping tagging"
+            skipped+=("$op:$version")
             continue
         fi
 
-        local commit="${OP_COMMIT[$op]:-}"
+        local commit
+        commit=$(release_field "$i" commit)
 
         if [[ -n "$commit" ]]; then
-            info "[$op] Using commit from config: $commit"
+            info "[$op $version] Using commit from config: $commit"
         else
             if [[ "$DRY_RUN" == true ]]; then
                 echo "[dry-run] Upstream tag $tag is missing from medik8s/$repo"
                 echo "[dry-run] Would clone downstream git@gitlab.cee.redhat.com:dragonfly/${repo}.git at tag $downstream_tag"
                 echo "[dry-run] Would extract submodule commit for '$repo'"
                 echo "[dry-run] Would clone upstream medik8s/$repo, create signed tag $tag, and push"
-                tagged+=("$op")
+                tagged+=("$op:$version")
                 continue
             fi
 
             local tmp_downstream="/tmp/${repo}-tag-$$"
 
-            info "[$op] Cloning downstream at tag $downstream_tag"
+            info "[$op $version] Cloning downstream at tag $downstream_tag"
             if ! git clone --depth 1 --branch "$downstream_tag" --no-checkout \
                 "git@gitlab.cee.redhat.com:dragonfly/${repo}.git" "$tmp_downstream" 2>/dev/null; then
                 rm -rf "$tmp_downstream"
-                die "Downstream tag $downstream_tag does not exist on dragonfly/${repo}. Create it as a prerequisite or set ${op}_COMMIT in the config."
+                die "Downstream tag $downstream_tag does not exist on dragonfly/${repo}. Create it as a prerequisite or set commit in the config."
             fi
 
             commit=$(git -C "$tmp_downstream" ls-tree HEAD "$repo" | awk '{print $3}')
             rm -rf "$tmp_downstream"
             if [[ -z "$commit" ]]; then
-                die "[$op] Could not extract submodule commit for '$repo' from downstream tag $downstream_tag"
+                die "[$op $version] Could not extract submodule commit for '$repo' from downstream tag $downstream_tag"
             fi
-            info "[$op] Submodule commit: $commit"
+            info "[$op $version] Submodule commit: $commit"
         fi
 
         if [[ "$DRY_RUN" == true ]]; then
             echo "[dry-run] Would create signed tag $tag on medik8s/$repo at commit $commit"
-            tagged+=("$op")
+            tagged+=("$op:$version")
             continue
         fi
 
-        info "[$op] Creating signed tag $tag on medik8s/$repo at commit $commit"
+        info "[$op $version] Creating signed tag $tag on medik8s/$repo at commit $commit"
         local tmp_upstream="/tmp/${repo}-upstream-$$"
-        if ! git clone --depth 1 "https://github.com/medik8s/${repo}.git" "$tmp_upstream" 2>/dev/null; then
+        if ! gh repo clone "medik8s/${repo}" "$tmp_upstream" -- --depth 1 2>/dev/null; then
             rm -rf "$tmp_upstream"
-            die "[$op] Failed to clone upstream repo medik8s/${repo}"
+            die "[$op $version] Failed to clone upstream repo medik8s/${repo}"
         fi
         if ! git -C "$tmp_upstream" fetch --depth 1 origin "$commit" 2>/dev/null; then
             rm -rf "$tmp_upstream"
-            die "[$op] Commit $commit does not exist on medik8s/${repo}. The downstream submodule may point to a commit that was force-pushed or rebased away."
+            die "[$op $version] Commit $commit does not exist on medik8s/${repo}. The downstream submodule may point to a commit that was force-pushed or rebased away."
         fi
         git -C "$tmp_upstream" tag -s "$tag" "$commit" -m "${display} ${tag}"
         git -C "$tmp_upstream" push origin "$tag"
 
         rm -rf "$tmp_upstream"
 
-        tagged+=("$op")
-        info "[$op] Tag $tag created and pushed"
+        tagged+=("$op:$version")
+        info "[$op $version] Tag $tag created and pushed"
     done
 
     log "tag_upstream summary"
@@ -406,35 +425,41 @@ build_and_push() {
     local -a run_ids=()
     local -a run_repos=()
 
-    for op in $(active_operators); do
-        if [[ "${OP_NEEDS_BUILD[$op]:-yes}" == "no" ]]; then
-            info "[$op] Images already exist on quay.io — skipping build_and_push"
+    for ((i=0; i<RELEASE_COUNT; i++)); do
+        local op version previous
+        op=$(release_field "$i" operator)
+        version=$(release_field "$i" version)
+
+        if [[ "${RELEASE_NEEDS_BUILD[$i]:-yes}" == "no" ]]; then
+            info "[$op $version] Images already exist on quay.io — skipping build_and_push"
             continue
         fi
 
+        previous=$(release_field "$i" previous)
         local repo="${OP_REPO[$op]}"
         local workflow="${OP_WORKFLOW[$op]}"
-        local version="${OP_VERSION[$op]}"
-        local previous="${OP_PREVIOUS[$op]}"
         local tag="v${version}"
 
-        if [[ "$DRY_RUN" != true && "${OP_NEEDS_BUILD[$op]}" == "partial" ]]; then
-            warn "[$op] Partial build detected for $tag — one of operator/bundle image is missing on quay.io"
+        if [[ "$DRY_RUN" != true && "${RELEASE_NEEDS_BUILD[$i]}" == "partial" ]]; then
+            warn "[$op $version] Partial build detected for $tag — one of operator/bundle image is missing on quay.io"
             info "A previous build_and_push may have partially failed."
-            read -rp "    Proceed with build_and_push for $op? [y/N] " answer
+            read -rp "    Proceed with build_and_push for $op $version? [y/N] " answer
             if [[ "$answer" != [yY] ]]; then
-                info "[$op] Skipping build_and_push (user declined)"
+                info "[$op $version] Skipping build_and_push (user declined)"
                 continue
             fi
         fi
 
         local -a extra_fields=()
-        [[ "$op" == "NHC" ]] && extra_fields+=(-f "skip_range_lower=${NHC_SKIP_RANGE_LOWER}")
+        local srl
+        srl=$(release_field "$i" skip_range_lower)
+        [[ -z "$srl" ]] || extra_fields+=(-f "skip_range_lower=${srl}")
 
-        [[ "$DRY_RUN" == true ]] || info "[$op] Triggering build_and_push_images on medik8s/$repo"
+        [[ "$DRY_RUN" == true ]] || info "[$op $version] Triggering build_and_push_images on medik8s/$repo"
         run gh workflow run "$workflow" \
             --repo "medik8s/${repo}" \
-            --ref "$tag" \
+            --ref main \
+            -f "checkout_ref=${tag}" \
             -f operation=build_and_push_images \
             -f "version=${version}" \
             -f "previous_version=${previous}" \
@@ -460,19 +485,20 @@ trigger_community_workflow() {
     shift 10
 
     if [[ "$DRY_RUN" != true ]] && community_branch_exists "$fork_repo" "$branch"; then
-        warn "[$op] $community branch ${branch} already exists on ${fork_repo}"
+        warn "[$op $version] $community branch ${branch} already exists on ${fork_repo}"
         info "A previous community workflow may have already run."
         read -rp "    Proceed and overwrite? [y/N] " answer
         if [[ "$answer" != [yY] ]]; then
-            info "[$op] Skipping $community community workflow (user declined)"
+            info "[$op $version] Skipping $community community workflow (user declined)"
             return 0
         fi
     fi
 
-    [[ "$DRY_RUN" == true ]] || info "[$op] Triggering $operation on medik8s/$repo"
+    [[ "$DRY_RUN" == true ]] || info "[$op $version] Triggering $operation on medik8s/$repo"
     run gh workflow run "$workflow" \
         --repo "medik8s/${repo}" \
-        --ref "$tag" \
+        --ref main \
+        -f "checkout_ref=${tag}" \
         -f "operation=${operation}" \
         -f "version=${version}" \
         -f "previous_version=${previous}" \
@@ -489,27 +515,33 @@ trigger_community_workflows() {
     local -a run_ids=()
     local -a run_repos=()
 
-    for op in $(active_operators); do
+    for ((i=0; i<RELEASE_COUNT; i++)); do
+        local op version previous
+        op=$(release_field "$i" operator)
+        version=$(release_field "$i" version)
+        previous=$(release_field "$i" previous)
         local repo="${OP_REPO[$op]}"
         local workflow="${OP_WORKFLOW[$op]}"
-        local version="${OP_VERSION[$op]}"
-        local previous="${OP_PREVIOUS[$op]}"
         local tag="v${version}"
 
         local -a extra_fields=()
-        [[ "$op" == "NHC" ]] && extra_fields+=(-f "skip_range_lower=${NHC_SKIP_RANGE_LOWER}")
+        local srl
+        srl=$(release_field "$i" skip_range_lower)
+        [[ -z "$srl" ]] || extra_fields+=(-f "skip_range_lower=${srl}")
 
-        if target_includes_k8s && [[ "${OP_K8S[$op]}" == "yes" ]]; then
+        if release_targets_k8s "$i"; then
             trigger_community_workflow "$op" "$repo" "$workflow" "$tag" "$version" "$previous" \
                 "K8S" "medik8s/community-operators" \
                 "add-${repo}-${version}-k8s" "create_k8s_release_pr" "${extra_fields[@]}"
         fi
 
-        if target_includes_okd && [[ "${OP_OKD[$op]}" == "yes" ]]; then
+        if release_targets_okd "$i"; then
+            local ocp_version
+            ocp_version=$(release_ocp_version "$i")
             trigger_community_workflow "$op" "$repo" "$workflow" "$tag" "$version" "$previous" \
                 "OKD" "medik8s/community-operators-prod" \
-                "add-${repo}-${version}-okd" "create_okd_release_pr" "${extra_fields[@]}" \
-                -f "ocp_version=${OCP_VERSION}"
+                "add-${repo}-${version}-okd-${ocp_version}" "create_okd_release_pr" "${extra_fields[@]}" \
+                -f "ocp_version=${ocp_version}"
         fi
     done
 
@@ -527,12 +559,12 @@ create_community_pr() {
     local community="$6" target_repo="$7" fork_repo="$8" branch="$9"
 
     if version_already_released "$target_repo" "$repo" "$version" "$previous"; then
-        info "[$op] $community version ${version} already released in $target_repo — skipping"
+        info "[$op $version] $community version ${version} already released in $target_repo — skipping"
         return 0
     fi
 
     if ! community_branch_exists "$fork_repo" "$branch"; then
-        warn "[$op] $community branch ${branch} does not exist on ${fork_repo} — cannot create PR"
+        warn "[$op $version] $community branch ${branch} does not exist on ${fork_repo} — cannot create PR"
         return 0
     fi
 
@@ -542,7 +574,7 @@ create_community_pr() {
     fi
 
     if [[ -n "$existing_pr" ]]; then
-        info "[$op] $community PR already exists: $existing_pr"
+        info "[$op $version] $community PR already exists: $existing_pr"
         PR_URLS+=("$community $op: $existing_pr")
         return 0
     fi
@@ -552,7 +584,7 @@ create_community_pr() {
         return 0
     fi
 
-    info "[$op] Creating $community PR on $target_repo (branch: $branch)"
+    info "[$op $version] Creating $community PR on $target_repo (branch: $branch)"
     local pr_url
     pr_url=$(gh pr create \
         --repo "$target_repo" \
@@ -560,32 +592,38 @@ create_community_pr() {
         --base main \
         --title "operator ${repo} (${version})" \
         --body "$pr_body" 2>&1) || true
-    info "[$op] $community PR: $pr_url"
+    info "[$op $version] $community PR: $pr_url"
     PR_URLS+=("$community $op: $pr_url")
 }
 
 create_prs() {
     step "create_prs — creating upstream community PRs"
 
-    for op in $(active_operators); do
+    for ((i=0; i<RELEASE_COUNT; i++)); do
+        local op version previous
+        op=$(release_field "$i" operator)
+        version=$(release_field "$i" version)
+        previous=$(release_field "$i" previous)
         local repo="${OP_REPO[$op]}"
-        local version="${OP_VERSION[$op]}"
-        local previous="${OP_PREVIOUS[$op]}"
         local pr_body="Add operator ${repo} (${version}), replacing ${previous}, by the [Medik8s Team](mailto:medik8s@googlegroups.com)."
 
-        if target_includes_k8s && [[ "${OP_K8S[$op]}" == "yes" ]]; then
+        if release_targets_k8s "$i"; then
             create_community_pr "$op" "$repo" "$version" "$previous" "$pr_body" \
                 "K8S" "k8s-operatorhub/community-operators" "medik8s/community-operators" \
                 "add-${repo}-${version}-k8s"
         fi
 
-        if target_includes_okd && [[ "${OP_OKD[$op]}" == "yes" ]]; then
+        if release_targets_okd "$i"; then
+            local ocp_version
+            ocp_version=$(release_ocp_version "$i")
             create_community_pr "$op" "$repo" "$version" "$previous" "$pr_body" \
                 "OKD" "redhat-openshift-ecosystem/community-operators-prod" "medik8s/community-operators-prod" \
-                "add-${repo}-${version}-okd"
+                "add-${repo}-${version}-okd-${ocp_version}"
         fi
     done
 }
+
+# ── Wait for workflow runs ───────────────────────────────────────────────────
 
 wait_for_runs() {
     local -n _ids=$1
@@ -605,15 +643,15 @@ wait_for_runs() {
         local -a still_pending_ids=()
         local -a still_pending_repos=()
 
-        for i in "${!pending_ids[@]}"; do
-            local run_id="${pending_ids[$i]}"
-            local repo="${pending_repos[$i]}"
+        for idx in "${!pending_ids[@]}"; do
+            local run_id="${pending_ids[$idx]}"
+            local repo="${pending_repos[$idx]}"
 
             local status conclusion
             local run_json
             run_json=$(gh run view "$run_id" --repo "$repo" --json status,conclusion 2>/dev/null || echo '{}')
-            status=$(echo "$run_json" | jq -r '.status // "unknown"')
-            conclusion=$(echo "$run_json" | jq -r '.conclusion // ""')
+            status=$(echo "$run_json" | yq e '.status // "unknown"')
+            conclusion=$(echo "$run_json" | yq e '.conclusion // ""')
 
             if [[ "$status" == "completed" ]]; then
                 if [[ "$conclusion" == "success" ]]; then
@@ -638,6 +676,8 @@ wait_for_runs() {
     log "All workflow runs completed successfully"
 }
 
+# ── Output ───────────────────────────────────────────────────────────────────
+
 print_summary() {
     echo ""
     log "Summary"
@@ -654,9 +694,11 @@ print_summary() {
     echo ""
 }
 
+# ── CLI ──────────────────────────────────────────────────────────────────────
+
 usage() {
     cat <<EOF
-Usage: $(basename "$0") [OPTIONS] <config-file>
+Usage: $(basename "$0") [OPTIONS] <config-file.yaml>
 
 Options:
   --dry-run       Print commands without executing them
