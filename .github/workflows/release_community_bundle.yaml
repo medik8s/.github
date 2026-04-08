@@ -127,7 +127,11 @@ jobs:
         run: |
           OPERATOR_NAME="$(basename "${PROJECT}")"
           COMMUNITY_SUFFIX="$(echo "${{ inputs.community }}" | tr '[:upper:]' '[:lower:]')"
-          BRANCH="add-${OPERATOR_NAME}-${VERSION}-${COMMUNITY_SUFFIX}"
+          if [ "${{ inputs.community }}" == 'OKD' ] && [ -n "${OCP_VERSION}" ]; then
+            BRANCH="add-${OPERATOR_NAME}-${VERSION}-${COMMUNITY_SUFFIX}-${OCP_VERSION}"
+          else
+            BRANCH="add-${OPERATOR_NAME}-${VERSION}-${COMMUNITY_SUFFIX}"
+          fi
 
           if [ "${{ inputs.community }}" == 'K8S' ]; then
             git -C community remote add fork https://github.com/medik8s/community-operators.git
