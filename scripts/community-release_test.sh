@@ -80,7 +80,7 @@ run_validate_config() {
 }
 
 run_tag_upstream_with() {
-    local mock_dir="$1" yaml_content="$2"
+    local mock_dir="$1" yaml_content="$2" dry_run="${3:-false}"
     local config_file
     config_file=$(write_yaml_config "$yaml_content")
     (
@@ -88,7 +88,7 @@ run_tag_upstream_with() {
         export PATH="${mock_dir}:${PATH}"
         # shellcheck disable=SC1091
         source "${SCRIPT_DIR}/community-release.sh"
-        DRY_RUN=false
+        DRY_RUN="$dry_run"
         CONFIG_FILE="$config_file"
         parse_yaml_config
         init_operator_metadata
@@ -407,6 +407,170 @@ MOCK
 
     assert_output_contains "downstream tag shown" "$output" "Downstream tag: v5.6.0" || return 1
     assert_output_contains "clone used v5.6.0" "$clone_args" "v5.6.0" || return 1
+}
+
+# ── Dry-run resolves commits from downstream instead of placeholders ──────
+
+test_dryrun_resolves_commits() {
+    local mock_dir
+    mock_dir=$(make_mock_dir)
+
+    cat > "${mock_dir}/gh" <<'MOCK'
+#!/usr/bin/env bash
+if [[ "$1" == "api" && "$2" == repos/medik8s/*/git/refs/tags/* ]]; then
+    exit 1  # tag doesn't exist
+fi
+echo "unexpected gh call: $*" >&2; exit 1
+MOCK
+    chmod +x "${mock_dir}/gh"
+
+    cat > "${mock_dir}/git" <<MOCK
+#!/usr/bin/env bash
+case "\$1" in
+    clone)
+        for last; do true; done
+        mkdir -p "\$last"
+        exit 0
+        ;;
+    -C)
+        shift; shift
+        case "\$1" in
+            ls-tree) echo "160000 commit abc123def456 self-node-remediation"; exit 0 ;;
+        esac
+        ;;
+esac
+echo "unexpected git call: \$*" >&2; exit 1
+MOCK
+    chmod +x "${mock_dir}/git"
+
+    local output rc=0
+    output=$(run_tag_upstream_with "$mock_dir" "$SNR_RELEASE" true 2>&1) || rc=$?
+    rm -rf "$mock_dir"
+
+    [[ $rc -eq 0 ]] || { echo "    Expected exit 0, got $rc"; echo "    Output: $output"; return 1; }
+    # Commit was resolved from downstream
+    assert_output_contains "commit resolved" "$output" "Submodule commit for self-node-remediation: abc123def456" || return 1
+    # Dry-run says "would create" with the actual commit
+    assert_output_contains "dry-run with commit" "$output" "Would create signed tag v0.99.0 on medik8s/self-node-remediation at commit abc123def456" || return 1
+    # Should NOT contain old placeholder messages
+    assert_output_not_contains "no clone placeholder" "$output" "Would clone downstream" || return 1
+    assert_output_not_contains "no extract placeholder" "$output" "Would extract submodule" || return 1
+}
+
+# ── NHC companions: all three repos tagged in dry-run ────────────────────
+
+NHC_RELEASE='releases:
+  - operator: NHC
+    version: "0.10.3"
+    previous: "0.10.0"'
+
+test_nhc_companions_dryrun() {
+    local mock_dir
+    mock_dir=$(make_mock_dir)
+
+    cat > "${mock_dir}/gh" <<'MOCK'
+#!/usr/bin/env bash
+if [[ "$1" == "api" && "$2" == repos/medik8s/*/git/refs/tags/* ]]; then
+    exit 1  # tag doesn't exist
+fi
+echo "unexpected gh call: $*" >&2; exit 1
+MOCK
+    chmod +x "${mock_dir}/gh"
+
+    cat > "${mock_dir}/git" <<MOCK
+#!/usr/bin/env bash
+case "\$1" in
+    clone)
+        for last; do true; done
+        mkdir -p "\$last"
+        exit 0
+        ;;
+    -C)
+        shift; shift
+        case "\$1" in
+            ls-tree)
+                repo="\$3"
+                case "\$repo" in
+                    node-healthcheck-operator) echo "160000 commit aaa111 node-healthcheck-operator"; exit 0 ;;
+                    node-remediation-console) echo "160000 commit bbb222 node-remediation-console"; exit 0 ;;
+                    must-gather) echo "160000 commit ccc333 must-gather"; exit 0 ;;
+                esac
+                ;;
+        esac
+        ;;
+esac
+echo "unexpected git call: \$*" >&2; exit 1
+MOCK
+    chmod +x "${mock_dir}/git"
+
+    local output rc=0
+    output=$(run_tag_upstream_with "$mock_dir" "$NHC_RELEASE" true 2>&1) || rc=$?
+    rm -rf "$mock_dir"
+
+    [[ $rc -eq 0 ]] || { echo "    Expected exit 0, got $rc"; echo "    Output: $output"; return 1; }
+    # All three commits resolved
+    assert_output_contains "NHC commit" "$output" "Submodule commit for node-healthcheck-operator: aaa111" || return 1
+    assert_output_contains "console commit" "$output" "Submodule commit for node-remediation-console: bbb222" || return 1
+    assert_output_contains "must-gather commit" "$output" "Submodule commit for must-gather: ccc333" || return 1
+    # Dry-run would-create messages for all three
+    assert_output_contains "NHC dry-run" "$output" "Would create signed tag v0.10.3 on medik8s/node-healthcheck-operator at commit aaa111" || return 1
+    assert_output_contains "console dry-run" "$output" "Would create signed tag v0.10.3 on medik8s/node-remediation-console at commit bbb222" || return 1
+    assert_output_contains "must-gather dry-run" "$output" "Would create signed tag v0.10.3 on medik8s/must-gather at commit ccc333" || return 1
+}
+
+# ── NHC companion already tagged → skipped, others still processed ───────
+
+test_nhc_companion_already_tagged() {
+    local mock_dir
+    mock_dir=$(make_mock_dir)
+
+    cat > "${mock_dir}/gh" <<'MOCK'
+#!/usr/bin/env bash
+if [[ "$1" == "api" && "$2" == repos/medik8s/*/git/refs/tags/* ]]; then
+    case "$2" in
+        *node-remediation-console*) echo '{"ref":"found"}'; exit 0 ;;  # already tagged
+        *) exit 1 ;;  # needs tagging
+    esac
+fi
+echo "unexpected gh call: $*" >&2; exit 1
+MOCK
+    chmod +x "${mock_dir}/gh"
+
+    cat > "${mock_dir}/git" <<MOCK
+#!/usr/bin/env bash
+case "\$1" in
+    clone)
+        for last; do true; done
+        mkdir -p "\$last"
+        exit 0
+        ;;
+    -C)
+        shift; shift
+        case "\$1" in
+            ls-tree)
+                repo="\$3"
+                case "\$repo" in
+                    node-healthcheck-operator) echo "160000 commit aaa111 node-healthcheck-operator"; exit 0 ;;
+                    must-gather) echo "160000 commit ccc333 must-gather"; exit 0 ;;
+                esac
+                ;;
+        esac
+        ;;
+esac
+echo "unexpected git call: \$*" >&2; exit 1
+MOCK
+    chmod +x "${mock_dir}/git"
+
+    local output rc=0
+    output=$(run_tag_upstream_with "$mock_dir" "$NHC_RELEASE" true 2>&1) || rc=$?
+    rm -rf "$mock_dir"
+
+    [[ $rc -eq 0 ]] || { echo "    Expected exit 0, got $rc"; echo "    Output: $output"; return 1; }
+    # Console plugin skipped
+    assert_output_contains "console skipped" "$output" "already exists on medik8s/node-remediation-console" || return 1
+    # Other two get processed
+    assert_output_contains "NHC tagged" "$output" "Would create signed tag v0.10.3 on medik8s/node-healthcheck-operator" || return 1
+    assert_output_contains "must-gather tagged" "$output" "Would create signed tag v0.10.3 on medik8s/must-gather" || return 1
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1072,6 +1236,9 @@ run_test "partial operator set → only active processed" test_partial_operator_
 run_test "mixed: one exists, one missing → fail on missing" test_mixed_tags_exist_and_missing
 run_test "upstream commit missing → fail with hint" test_upstream_commit_missing
 run_test "downstream version differs → uses downstream tag" test_tag_with_downstream_version
+run_test "dry-run resolves commits from downstream" test_dryrun_resolves_commits
+run_test "NHC companions: all three repos tagged (dry-run)" test_nhc_companions_dryrun
+run_test "NHC companion already tagged → skipped" test_nhc_companion_already_tagged
 
 echo ""
 echo "=== validate_config ==="

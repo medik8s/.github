@@ -21,6 +21,12 @@ declare -A OP_DISPLAY=()
 declare -A OP_QUAY_IMAGE=()
 declare -A OP_WORKFLOW=()
 
+# Companion repos: additional submodules that share the same downstream repo
+# and only need tagging on GitHub (no build/community/PR steps).
+declare -A OP_COMPANIONS=(
+    [NHC]="node-remediation-console must-gather"
+)
+
 DRY_RUN=false
 STEP=all          # tag, build, community, prs, or all
 CONFIG_FILE=""
@@ -345,69 +351,121 @@ tag_upstream() {
             info "[$op $version] Downstream tag: $downstream_tag (upstream: $tag)"
         fi
 
-        info "[$op $version] Checking tag $tag on medik8s/$repo"
-
-        if gh_tag_exists "medik8s/${repo}" "$tag"; then
-            info "[$op $version] Tag $tag already exists on medik8s/$repo — skipping tagging"
-            skipped+=("$op:$version")
-            continue
+        # Build list of repos to tag: main + companions
+        local -a tag_repos=("$repo")
+        local companions="${OP_COMPANIONS[$op]:-}"
+        if [[ -n "$companions" ]]; then
+            local -a comp_arr
+            read -ra comp_arr <<< "$companions"
+            tag_repos+=("${comp_arr[@]}")
         fi
 
-        local commit
-        commit=$(release_field "$i" commit)
-
-        if [[ -n "$commit" ]]; then
-            info "[$op $version] Using commit from config: $commit"
-        else
-            if [[ "$DRY_RUN" == true ]]; then
-                echo "[dry-run] Upstream tag $tag is missing from medik8s/$repo"
-                echo "[dry-run] Would clone downstream git@gitlab.cee.redhat.com:dragonfly/${repo}.git at tag $downstream_tag"
-                echo "[dry-run] Would extract submodule commit for '$repo'"
-                echo "[dry-run] Would clone upstream medik8s/$repo, create signed tag $tag, and push"
-                tagged+=("$op:$version")
+        # Check which repos still need a tag
+        local -a need_tag=()
+        for r in "${tag_repos[@]}"; do
+            info "[$op $version] Checking tag $tag on medik8s/$r"
+            if gh_tag_exists "medik8s/${r}" "$tag"; then
+                info "[$op $version] Tag $tag already exists on medik8s/$r — skipping tagging"
+                [[ "$r" != "$repo" ]] || skipped+=("$op:$version")
                 continue
             fi
+            need_tag+=("$r")
+        done
 
-            local tmp_downstream="/tmp/${repo}-tag-$$"
+        [[ ${#need_tag[@]} -gt 0 ]] || continue
 
+        # --- Resolve commits ---------------------------------------------------
+        # Config-level commit applies only to the main repo
+        local config_commit=""
+        config_commit=$(release_field "$i" commit)
+
+        # Determine if we need to clone downstream
+        local clone_needed=false
+        for r in "${need_tag[@]}"; do
+            if [[ "$r" == "$repo" && -n "$config_commit" ]]; then
+                continue   # main repo has config override
+            fi
+            clone_needed=true
+            break
+        done
+
+        local tmp_downstream=""
+        if [[ "$clone_needed" == true ]]; then
+            tmp_downstream="/tmp/${repo}-tag-$$"
             info "[$op $version] Cloning downstream at tag $downstream_tag"
             if ! git clone --depth 1 --branch "$downstream_tag" --no-checkout \
                 "git@gitlab.cee.redhat.com:dragonfly/${repo}.git" "$tmp_downstream" 2>/dev/null; then
                 rm -rf "$tmp_downstream"
                 die "Downstream tag $downstream_tag does not exist on dragonfly/${repo}. Create it as a prerequisite or set commit in the config."
             fi
+        fi
 
-            commit=$(git -C "$tmp_downstream" ls-tree HEAD "$repo" | awk '{print $3}')
-            rm -rf "$tmp_downstream"
-            if [[ -z "$commit" ]]; then
-                die "[$op $version] Could not extract submodule commit for '$repo' from downstream tag $downstream_tag"
+        # Resolve each repo's commit
+        # Using parallel arrays (bash associative arrays can't reliably be
+        # cleared inside a loop).
+        local -a resolved_repos=() resolved_commits=()
+        for r in "${need_tag[@]}"; do
+            local commit=""
+            if [[ "$r" == "$repo" && -n "$config_commit" ]]; then
+                commit="$config_commit"
+                info "[$op $version] Using commit from config: $commit"
+            else
+                commit=$(git -C "$tmp_downstream" ls-tree HEAD "$r" | awk '{print $3}')
+                if [[ -z "$commit" ]]; then
+                    rm -rf "$tmp_downstream"
+                    die "[$op $version] Could not extract submodule commit for '$r' from downstream tag $downstream_tag"
+                fi
+                info "[$op $version] Submodule commit for $r: $commit"
             fi
-            info "[$op $version] Submodule commit: $commit"
-        fi
+            resolved_repos+=("$r")
+            resolved_commits+=("$commit")
+        done
 
-        if [[ "$DRY_RUN" == true ]]; then
-            echo "[dry-run] Would create signed tag $tag on medik8s/$repo at commit $commit"
-            tagged+=("$op:$version")
-            continue
-        fi
+        [[ -z "$tmp_downstream" ]] || rm -rf "$tmp_downstream"
 
-        info "[$op $version] Creating signed tag $tag on medik8s/$repo at commit $commit"
-        local tmp_upstream="/tmp/${repo}-upstream-$$"
-        if ! gh repo clone "medik8s/${repo}" "$tmp_upstream" -- --depth 1 2>/dev/null; then
+        # --- Create tags -------------------------------------------------------
+        for idx in "${!resolved_repos[@]}"; do
+            local r="${resolved_repos[$idx]}"
+            local commit="${resolved_commits[$idx]}"
+
+            if [[ "$DRY_RUN" == true ]]; then
+                echo "[dry-run] Would create signed tag $tag on medik8s/$r at commit $commit"
+                [[ "$r" != "$repo" ]] || tagged+=("$op:$version")
+                continue
+            fi
+
+            # Build display name for the tag message
+            local tag_display
+            if [[ "$r" == "$repo" ]]; then
+                tag_display="$display"
+            else
+                local -a words
+                IFS='-' read -ra words <<< "$r"
+                tag_display=""
+                for word in "${words[@]}"; do
+                    tag_display+="${word^} "
+                done
+                tag_display="${tag_display% }"
+            fi
+
+            info "[$op $version] Creating signed tag $tag on medik8s/$r at commit $commit"
+            local tmp_upstream="/tmp/${r}-upstream-$$"
+            if ! gh repo clone "medik8s/${r}" "$tmp_upstream" -- --depth 1 2>/dev/null; then
+                rm -rf "$tmp_upstream"
+                die "[$op $version] Failed to clone upstream repo medik8s/${r}"
+            fi
+            if ! git -C "$tmp_upstream" fetch --depth 1 origin "$commit" 2>/dev/null; then
+                rm -rf "$tmp_upstream"
+                die "[$op $version] Commit $commit does not exist on medik8s/${r}. The downstream submodule may point to a commit that was force-pushed or rebased away."
+            fi
+            git -C "$tmp_upstream" tag -s "$tag" "$commit" -m "${tag_display} ${tag}"
+            git -C "$tmp_upstream" push origin "$tag"
+
             rm -rf "$tmp_upstream"
-            die "[$op $version] Failed to clone upstream repo medik8s/${repo}"
-        fi
-        if ! git -C "$tmp_upstream" fetch --depth 1 origin "$commit" 2>/dev/null; then
-            rm -rf "$tmp_upstream"
-            die "[$op $version] Commit $commit does not exist on medik8s/${repo}. The downstream submodule may point to a commit that was force-pushed or rebased away."
-        fi
-        git -C "$tmp_upstream" tag -s "$tag" "$commit" -m "${display} ${tag}"
-        git -C "$tmp_upstream" push origin "$tag"
 
-        rm -rf "$tmp_upstream"
-
-        tagged+=("$op:$version")
-        info "[$op $version] Tag $tag created and pushed"
+            [[ "$r" != "$repo" ]] || tagged+=("$op:$version")
+            info "[$op $version] Tag $tag created and pushed on medik8s/$r"
+        done
     done
 
     log "tag_upstream summary"
