@@ -15,6 +15,7 @@ declare -A OP_REPO=(
     [NMO]=node-maintenance-operator
     [NHC]=node-healthcheck-operator
     [MDR]=machine-deletion-remediation
+    [SBR]=storage-based-remediation
 )
 
 declare -A OP_DISPLAY=()
@@ -569,6 +570,23 @@ trigger_community_workflow() {
 
 trigger_community_workflows() {
     step "trigger_community_workflows — triggering community bundle workflows"
+
+    # Sync forks so pushed branches don't contain unwanted diffs
+    local needs_k8s=false needs_okd=false
+    for ((i=0; i<RELEASE_COUNT; i++)); do
+        release_targets_k8s "$i" && needs_k8s=true
+        release_targets_okd "$i" && needs_okd=true
+    done
+
+    if [[ "$needs_k8s" == true ]]; then
+        info "Syncing fork medik8s/community-operators with upstream"
+        run gh repo sync medik8s/community-operators
+    fi
+
+    if [[ "$needs_okd" == true ]]; then
+        info "Syncing fork medik8s/community-operators-prod with upstream"
+        run gh repo sync medik8s/community-operators-prod
+    fi
 
     local -a run_ids=()
     local -a run_repos=()
