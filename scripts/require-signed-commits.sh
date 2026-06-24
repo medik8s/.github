@@ -53,8 +53,8 @@ for repo in $REPOS; do
   branches=$(yq ".repos.\"${repo}\".branches[]" "$CONFIG")
 
   for branch in $branches; do
-    api_response=$(gh api "repos/${ORG}/${repo}/branches/${branch}/protection/required_signatures" 2>&1)
-    api_exit=$?
+    api_exit=0
+    api_response=$(gh api "repos/${ORG}/${repo}/branches/${branch}/protection/required_signatures" 2>&1) || api_exit=$?
     if [[ $api_exit -eq 0 ]]; then
       current=$(echo "$api_response" | yq -p json '.enabled')
     elif echo "$api_response" | grep -q "Branch not protected\|Not Found"; then
