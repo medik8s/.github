@@ -1,3 +1,5 @@
+# Branches correspond to supported OCP operator versions per:
+# https://access.redhat.com/support/policy/updates/openshift_operators#platform-aligned
 org: medik8s
 repos:
   node-healthcheck-operator:

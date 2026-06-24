@@ -53,9 +53,17 @@ for repo in $REPOS; do
   branches=$(yq ".repos.\"${repo}\".branches[]" "$CONFIG")
 
   for branch in $branches; do
-    api_response=$(gh api "repos/${ORG}/${repo}/branches/${branch}/protection/required_signatures" 2>&1) && \
-      current=$(echo "$api_response" | yq -p json '.enabled') || \
+    api_response=$(gh api "repos/${ORG}/${repo}/branches/${branch}/protection/required_signatures" 2>&1)
+    api_exit=$?
+    if [[ $api_exit -eq 0 ]]; then
+      current=$(echo "$api_response" | yq -p json '.enabled')
+    elif echo "$api_response" | grep -q "Branch not protected\|Not Found"; then
       current="no-protection"
+    else
+      warn "$branch — API error: $api_response"
+      ((failed++)) || true
+      continue
+    fi
 
     if [[ "$ACTION" == "disable" ]]; then
       if [[ "$current" == "false" || "$current" == "no-protection" ]]; then
@@ -67,11 +75,11 @@ for repo in $REPOS; do
         info "[dry-run] $branch — would DISABLE signed commits"
         continue
       fi
-      if gh api "repos/${ORG}/${repo}/branches/${branch}/protection/required_signatures" --method DELETE --silent 2>/dev/null; then
+      if api_err=$(gh api "repos/${ORG}/${repo}/branches/${branch}/protection/required_signatures" --method DELETE 2>&1); then
         info "$branch — disabled"
         ((changed++)) || true
       else
-        warn "$repo/$branch — failed to disable"
+        warn "$repo/$branch — failed to disable: $api_err"
         ((failed++)) || true
       fi
     else
@@ -89,11 +97,11 @@ for repo in $REPOS; do
         info "[dry-run] $branch — would ENABLE signed commits"
         continue
       fi
-      if gh api "repos/${ORG}/${repo}/branches/${branch}/protection/required_signatures" --method POST --silent 2>/dev/null; then
+      if api_err=$(gh api "repos/${ORG}/${repo}/branches/${branch}/protection/required_signatures" --method POST 2>&1); then
         info "$branch — enabled"
         ((changed++)) || true
       else
-        warn "$repo/$branch — failed to enable (need admin access?)"
+        warn "$repo/$branch — failed to enable: $api_err"
         ((failed++)) || true
       fi
     fi
