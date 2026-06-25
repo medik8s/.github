@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG="${SCRIPT_DIR}/signed-commits.yaml"
-
+ORG="medik8s"
 DRY_RUN=false
 ACTION="enable"
 CONFIRM=false
+REPOS=()
+BRANCHES=()
+DEFAULT_BRANCH_PATTERN='main|release-.+'
 
 log()  { echo "==> $*"; }
 info() { echo "    $(date -u +%H:%M:%SZ) $*"; }
@@ -20,22 +21,39 @@ while [[ $# -gt 0 ]]; do
     --dry-run)  DRY_RUN=true; shift ;;
     --disable)  ACTION="disable"; shift ;;
     --confirm)  CONFIRM=true; shift ;;
-    --config)
-      if [[ -z "${2:-}" ]]; then
-        die "--config requires a path argument"
-      fi
-      CONFIG="$2"; shift 2 ;;
+    --org)
+      [[ -n "${2:-}" ]] || die "--org requires a value"
+      ORG="$2"; shift 2 ;;
+    --repo)
+      [[ -n "${2:-}" ]] || die "--repo requires a value"
+      REPOS+=("$2"); shift 2 ;;
+    --branch)
+      [[ -n "${2:-}" ]] || die "--branch requires a value"
+      BRANCHES+=("$2"); shift 2 ;;
     --help|-h)
-      echo "Usage: $0 [--dry-run] [--disable --confirm] [--config PATH]"
-      echo ""
-      echo "Enable or disable required signed commits on branches defined in a YAML config."
-      echo "Reads repos and branches from signed-commits.yaml (or --config PATH)."
-      echo ""
-      echo "Options:"
-      echo "  --dry-run        Show what would be done without making changes"
-      echo "  --disable        Remove the requirement instead of adding it"
-      echo "  --confirm        Required with --disable to prevent accidental removal"
-      echo "  --config PATH    Path to YAML config (default: signed-commits.yaml next to this script)"
+      cat <<'EOF'
+Usage: require-signed-commits.sh [OPTIONS]
+
+Enable or disable required signed commits on protected branches.
+
+By default, discovers all non-archived, non-fork repos in the org and
+targets branches matching: main, release-*
+
+Options:
+  --dry-run          Show what would be done without making changes
+  --disable          Remove the requirement instead of adding it
+  --confirm          Required with --disable to prevent accidental removal
+  --org ORG          GitHub organization (default: medik8s)
+  --repo REPO        Target specific repo(s) — repeatable
+  --branch PATTERN   Override branch filter — repeatable, regex
+                     (default: main and release-.+)
+
+Examples:
+  require-signed-commits.sh --dry-run
+  require-signed-commits.sh --repo self-node-remediation --dry-run
+  require-signed-commits.sh --repo nhc --repo snr --branch main --dry-run
+  require-signed-commits.sh --disable --confirm
+EOF
       exit 0
       ;;
     *) die "Unknown option: $1" ;;
@@ -46,29 +64,66 @@ if [[ "$ACTION" == "disable" && "$DRY_RUN" != "true" && "$CONFIRM" != "true" ]];
   die "--disable requires --confirm (or use --dry-run to preview)"
 fi
 
-[[ -f "$CONFIG" ]] || die "Config file not found: $CONFIG"
-command -v yq &>/dev/null || die "yq is required. Install from https://github.com/mikefarah/yq"
-yq --version 2>&1 | grep -q "mikefarah" || die "Wrong yq variant detected. Need mikefarah/yq, not kislyuk/yq."
 gh auth status &>/dev/null || die "Not authenticated with gh CLI. Run 'gh auth login' first."
-
-ORG=$(yq '.org' "$CONFIG") || die "Failed to parse org from $CONFIG"
 valid_name "$ORG" || die "Invalid org name: $ORG"
+
+# Build branch pattern from --branch flags or default
+if [[ ${#BRANCHES[@]} -gt 0 ]]; then
+  branch_pattern=$(IFS='|'; echo "${BRANCHES[*]}")
+else
+  branch_pattern="$DEFAULT_BRANCH_PATTERN"
+fi
+
+# Validate regex before use (grep exit 1 = no match, exit 2 = bad regex)
+grep_exit=0
+grep -E "^(${branch_pattern})$" /dev/null >/dev/null 2>&1 || grep_exit=$?
+[[ $grep_exit -le 1 ]] || die "Invalid branch regex: ${branch_pattern}"
+
+# Discover repos: --repo flags or all non-archived, non-fork repos in the org
+if [[ ${#REPOS[@]} -eq 0 ]]; then
+  log "Discovering repos in ${ORG} (non-archived, non-fork)..."
+  while IFS= read -r r; do
+    [[ -n "$r" ]] && REPOS+=("$r")
+  done < <(gh api "orgs/${ORG}/repos" --paginate \
+    --jq '.[] | select(.archived == false and .fork == false) | .name')
+  [[ ${#REPOS[@]} -gt 0 ]] || die "No repos found in org ${ORG}"
+  log "Found ${#REPOS[@]} repos"
+fi
 
 changed=0
 skipped=0
 failed=0
 
-while IFS= read -r repo; do
+for repo in "${REPOS[@]}"; do
   valid_name "$repo" || { warn "Skipping invalid repo name: $repo"; ((failed++)) || true; continue; }
   log "$repo"
 
-  while IFS= read -r branch; do
+  branches_exit=0
+  branches_response=$(gh api "repos/${ORG}/${repo}/branches" --paginate --jq '.[].name' 2>&1) || branches_exit=$?
+  if [[ $branches_exit -ne 0 ]]; then
+    warn "Failed to list branches for ${ORG}/${repo}: ${branches_response}"
+    ((failed++)) || true
+    continue
+  fi
+
+  matched_branches=()
+  while IFS= read -r b; do
+    [[ -n "$b" ]] && matched_branches+=("$b")
+  done < <(printf '%s\n' "$branches_response" \
+    | grep -E "^(${branch_pattern})$" || true)
+
+  if [[ ${#matched_branches[@]} -eq 0 ]]; then
+    info "(no branches matching: ${branch_pattern})"
+    continue
+  fi
+
+  for branch in "${matched_branches[@]}"; do
     valid_name "$branch" || { warn "Skipping invalid branch name: $branch"; ((failed++)) || true; continue; }
 
     api_exit=0
     api_response=$(gh api "repos/${ORG}/${repo}/branches/${branch}/protection/required_signatures" 2>&1) || api_exit=$?
     if [[ $api_exit -eq 0 ]]; then
-      current=$(echo "$api_response" | yq -p json '.enabled')
+      current=$(echo "$api_response" | grep -o '"enabled":\s*[a-z]*' | grep -o 'true\|false' || echo "unknown")
     elif echo "$api_response" | grep -q "Branch not protected\|Not Found"; then
       current="no-protection"
     else
@@ -117,8 +172,8 @@ while IFS= read -r repo; do
         ((failed++)) || true
       fi
     fi
-  done < <(yq ".repos.\"${repo}\".branches[]" "$CONFIG")
-done < <(yq '.repos | keys | .[]' "$CONFIG")
+  done
+done
 
 log "Done: changed=${changed} skipped=${skipped} failed=${failed}"
 [[ "$failed" -eq 0 ]] || exit 1
