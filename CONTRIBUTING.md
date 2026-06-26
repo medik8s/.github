@@ -39,7 +39,8 @@ All operator repos follow a typical layout:
 
 ```
 ├── api/                # CRD types, webhooks, deepcopy (v1alpha1 or v1beta1)
-├── controllers/ or pkg/ # Reconciler logic (location varies by repo)
+├── cmd/                # Entrypoint (main.go)
+├── internal/           # Reconciler and internal logic
 ├── e2e/ or test/e2e/   # End-to-end tests
 ├── config/             # Kustomize manifests
 ├── bundle/             # OLM bundle (generated)
@@ -63,6 +64,7 @@ git remote add upstream https://github.com/medik8s/<repo>.git
 ### Build and Test Locally
 
 ```bash
+make help        # List all available Make targets
 make build       # Build the operator binary
 make test        # Run unit tests (uses envtest)
 make manifests   # Regenerate CRDs, RBAC, webhooks
@@ -88,36 +90,19 @@ If you want to work on something, comment on the issue to let others know. For l
 
 2. **Make your changes** — keep commits focused and logical.
 
-3. **Run the full pre-submit check locally** before pushing:
+3. **Run tests locally** before pushing. In most repos, `make test` handles formatting, linting, code generation, and unit tests in one step:
    ```bash
-   make fix-imports      # Fix import ordering
-   make tidy vendor      # Update go.mod and vendor
-   make manifests        # Regenerate CRDs, RBAC
-   make generate         # Regenerate DeepCopy
-   make bundle           # Regenerate OLM bundle
-   make test             # Run unit tests
-   make verify-bundle    # Confirm bundle is clean
-   make verify-vendor    # Confirm vendor is clean
+   make test
    ```
 
-4. **Build the container** to verify the build:
-   ```bash
-   make container-build-community
-   ```
-
-5. **Push to your fork** and open a PR against the upstream `main` branch.
+4. **Push to your fork** and open a PR against the upstream `main` branch.
 
 ## Pull Request Process
 
 1. **Always submit PRs from your personal fork**, not from branches on the main repository.
 2. **One concern per PR** — don't mix unrelated changes.
-3. **Fill in the PR description** — explain *what* changed and *why*.
-4. **All CI checks must pass** before merge. The pre-submit pipeline (GitHub Actions) runs:
-   - Import sorting verification (`make test-imports`)
-   - Vendor verification (`make verify-vendor`)
-   - Bundle verification (`make verify-bundle`)
-   - Unit tests (`make test`)
-   - Container build (`make container-build-community`)
+3. **Fill in the PR description** using the provided template — explain *what* changed and *why*.
+4. **All CI checks must pass** before merge. The pre-submit pipeline runs `make test` (which includes formatting, linting, code generation, and unit tests) and a container build.
 5. **Respond to review feedback** promptly.
 6. **Keep your branch up to date** with upstream `main` by rebasing (not merging).
 
@@ -203,9 +188,13 @@ Each repository has an `OWNERS` file listing approvers and reviewers. PRs requir
 We use [Prow](https://docs.prow.k8s.io/) to manage CI and merging. You might see maintainers leave comments like:
 
 - `/ok-to-test` — Allows CI pipelines to run for first-time contributors. Your CI will stay pending until a maintainer comments this.
-- `/lgtm` — "Looks Good To Me" — approves the code changes.
+- `/lgtm` — "Looks Good To Me" — approves the code changes. A GitHub "Approve" review also counts as `/lgtm`.
 - `/approve` — Approves the PR for merging.
+- `/hold` — Blocks the PR from merging. Use `/hold cancel` to remove.
 - `/retest` — Re-runs failed CI jobs.
+- `/cherry-pick <branch>` — Creates a backport PR to the specified branch.
+
+> **Note**: Self-approval is disabled — you cannot `/lgtm` or `/approve` your own PR.
 
 Reviews can sometimes take a few days. If your PR hasn't received feedback, please don't hesitate to ping the reviewers in the comments!
 
