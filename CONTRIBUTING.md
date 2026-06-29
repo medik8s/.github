@@ -172,13 +172,13 @@ Write clear, concise commit messages:
 Short summary of the change (max 70 characters)
 
 Longer explanation if needed. Describe *why* the change was made,
-not just what changed. Wrap at 80 characters.
+not just what changed. Wrap at 72 characters.
 
 Signed-off-by: Your Name <your.email@example.com>
 ```
 
 - Use imperative mood: "Fix bug" not "Fixed bug"
-- Reference issues where relevant: "Fixes #123"
+- Reference related issues in the PR description (not the commit message), e.g. "Fixes #123" — this avoids unintended issue closures during cherry-picks
 - Keep the subject line under 70 characters
 
 ## Review and Approval
@@ -190,13 +190,13 @@ We use [Prow](https://docs.prow.k8s.io/) to manage CI and merging. You might see
 - `/ok-to-test` — Allows CI pipelines to run for first-time contributors. Your CI will stay pending until a maintainer comments this.
 - `/lgtm` — "Looks Good To Me" — approves the code changes. A GitHub "Approve" review also counts as `/lgtm`.
 - `/approve` — Approves the PR for merging.
-- `/hold` — Blocks the PR from merging. Use `/hold cancel` to remove.
+- `/hold` — Blocks the PR from merging. Use `/hold cancel` or `/unhold` to remove.
 - `/retest` — Re-runs failed CI jobs.
 - `/cherry-pick <branch>` — Creates a backport PR to the specified branch.
 
-> **Note**: Self-approval is disabled — you cannot `/lgtm` or `/approve` your own PR.
+> **Note**: Self-approval is not allowed — PRs require `/lgtm` and `/approve` from two different OWNERS members.
 
-Reviews can sometimes take a few days. If your PR hasn't received feedback, please don't hesitate to ping the reviewers in the comments!
+Reviews can sometimes take a few days. If your PR hasn't received feedback, please don't hesitate to ping the reviewers in the comments or reach out through our [Google Group](#getting-help)!
 
 If you become a regular contributor, you may be added as a reviewer or approver.
 
@@ -204,7 +204,7 @@ If you become a regular contributor, you may be added as a reviewer or approver.
 
 If you discover a security vulnerability, **do not** open a public issue.
 
-Because this project is maintained by Red Hat engineers and integrated into enterprise systems, please report vulnerabilities confidentially to the [Red Hat Product Security team](https://access.redhat.com/security/team/contact/). Alternatively, you can use the "Security and quality" tab on the repository to submit a private GitHub Security Advisory.
+Please report vulnerabilities confidentially by contacting any of the maintainers listed in the repository's OWNERS file, or use the "Security and quality" tab on the repository to submit a private GitHub Security Advisory.
 
 ## Getting Help
 

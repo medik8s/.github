@@ -6,4 +6,4 @@ Please read the [full text](https://www.contributor-covenant.org/version/2/1/cod
 
 ## Reporting
 
-If you experience or witness unacceptable behavior, please report it by opening an issue or contacting the maintainers listed in the repository's OWNERS file.
+If you experience or witness unacceptable behavior, please report it confidentially by contacting any of the maintainers listed in the repository's OWNERS file, or use the "Security and quality" tab on the repository to submit a private report.
