@@ -1,0 +1,173 @@
+name: Update Go Version
+
+on:
+  workflow_call:
+    inputs:
+      version-schema:
+        description: >
+          Version schema key matching a file in go-versions/ (e.g. "ocp-4.21").
+          The workflow fetches go-versions/<version-schema>.yaml from medik8s/.github
+          to determine the Go version and CI operator image.
+        required: true
+        type: string
+      dry-run:
+        description: "If true, only show what would change without creating a PR"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update-go:
+    name: Update Go version
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout operator repo
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Fetch version config from medik8s/.github
+        id: config
+        env:
+          VERSION_SCHEMA: ${{ inputs.version-schema }}
+        run: |
+          CONFIG_URL="https://raw.githubusercontent.com/medik8s/.github/main/go-versions/${VERSION_SCHEMA}.yaml"
+          HTTP_CODE=$(curl -sL -w "%{http_code}" -o /tmp/go-version.yaml "${CONFIG_URL}")
+          if [ "${HTTP_CODE}" != "200" ]; then
+            echo "::error::Version schema '${VERSION_SCHEMA}' not found at ${CONFIG_URL} (HTTP ${HTTP_CODE})"
+            exit 1
+          fi
+
+          # Parse simple key: "value" YAML without yq (not pre-installed on runners)
+          GO_VERSION=$(grep '^go:' /tmp/go-version.yaml | sed 's/^go: *"\?\([^"]*\)"\?/\1/')
+          CI_IMAGE=$(grep '^ci-operator-image:' /tmp/go-version.yaml | sed 's/^ci-operator-image: *"\?\([^"]*\)"\?/\1/')
+
+          echo "go=${GO_VERSION}" >> "${GITHUB_OUTPUT}"
+          echo "ci-image=${CI_IMAGE}" >> "${GITHUB_OUTPUT}"
+          echo "Go version: ${GO_VERSION}"
+          echo "CI image: ${CI_IMAGE}"
+
+      - name: Check if update needed
+        id: check
+        env:
+          TARGET_GO: ${{ steps.config.outputs.go }}
+          TARGET_CI_IMAGE: ${{ steps.config.outputs.ci-image }}
+        run: |
+          CURRENT_GO=$(grep '^go ' go.mod | awk '{print $2}')
+          HAS_TOOLCHAIN=$(grep -c '^toolchain ' go.mod || true)
+
+          # Detect if go.mod needs changes:
+          # - Version mismatch (e.g. 1.24 -> 1.25)
+          # - Needs normalization (e.g. 1.25.0 -> 1.25)
+          # - Has toolchain directive that should be removed
+          if [ "${CURRENT_GO}" != "${TARGET_GO}" ] || [ "${HAS_TOOLCHAIN}" -gt 0 ]; then
+            echo "go-update=true" >> "${GITHUB_OUTPUT}"
+            echo "Go update needed: '${CURRENT_GO}' -> '${TARGET_GO}' (toolchain present: ${HAS_TOOLCHAIN})"
+          else
+            echo "go-update=false" >> "${GITHUB_OUTPUT}"
+            echo "Go version already at ${TARGET_GO}, no toolchain directive"
+          fi
+
+          if [ -f .ci-operator.yaml ]; then
+            CURRENT_IMAGE=$(grep 'tag:' .ci-operator.yaml | sed 's/.*tag: *"\?\([^"]*\)"\?/\1/')
+            if [ "${CURRENT_IMAGE}" = "${TARGET_CI_IMAGE}" ]; then
+              echo "CI image already at ${TARGET_CI_IMAGE}"
+              echo "ci-update=false" >> "${GITHUB_OUTPUT}"
+            else
+              echo "CI image update needed: ${CURRENT_IMAGE} -> ${TARGET_CI_IMAGE}"
+              echo "ci-update=true" >> "${GITHUB_OUTPUT}"
+            fi
+          else
+            echo "No .ci-operator.yaml found, skipping CI image update"
+            echo "ci-update=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "${{ steps.config.outputs.go }}"
+
+      - name: Update go.mod
+        if: steps.check.outputs.go-update == 'true'
+        env:
+          TARGET_GO: ${{ steps.config.outputs.go }}
+        run: |
+          # Set Go minor version only (e.g. "1.25", not "1.25.0")
+          go mod edit -go="${TARGET_GO}"
+
+          # Remove toolchain directive — patch versions are handled by the builder
+          sed -i '/^toolchain /d' go.mod
+
+      - name: Update dependencies
+        run: |
+          # Always run tidy + vendor to pick up dependency security patches,
+          # even when the Go version itself hasn't changed
+          go mod tidy
+
+          if [ -d vendor ]; then
+            go mod vendor
+          fi
+
+      - name: Update .ci-operator.yaml
+        if: steps.check.outputs.ci-update == 'true'
+        env:
+          TARGET_CI_IMAGE: ${{ steps.config.outputs.ci-image }}
+        run: |
+          sed -i "s|^\(  tag: \).*|\1${TARGET_CI_IMAGE}|" .ci-operator.yaml
+
+      - name: Check for changes
+        id: changes
+        run: |
+          if git diff --quiet; then
+            echo "No file changes — everything is up to date"
+            echo "has-changes=false" >> "${GITHUB_OUTPUT}"
+          else
+            echo "has-changes=true" >> "${GITHUB_OUTPUT}"
+            git diff --stat
+          fi
+
+      - name: Verify build
+        if: steps.changes.outputs.has-changes == 'true'
+        run: |
+          if grep -q '^build:' Makefile 2>/dev/null; then
+            make build
+          else
+            go build ./...
+          fi
+
+      - name: Show changes (dry run)
+        if: inputs.dry-run && steps.changes.outputs.has-changes == 'true'
+        run: |
+          echo "=== Dry run — would create PR with these changes ==="
+          git diff --stat
+          echo "---"
+          git diff go.mod
+          echo "---"
+          git diff .ci-operator.yaml 2>/dev/null || true
+
+      - name: Create Pull Request
+        if: "!inputs.dry-run && steps.changes.outputs.has-changes == 'true'"
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ github.token }}
+          commit-message: "chore: update Go to ${{ steps.config.outputs.go }} and dependencies (${{ inputs.version-schema }})"
+          title: "chore: update Go to ${{ steps.config.outputs.go }} and dependencies (${{ inputs.version-schema }})"
+          branch: automated/go-version-update-${{ inputs.version-schema }}
+          delete-branch: true
+          body: |
+            Automated Go version and dependency update based on schema `${{ inputs.version-schema }}`.
+
+            **Changes:**
+            - Go version: `${{ steps.config.outputs.go }}`
+            - CI operator image: `${{ steps.config.outputs.ci-image }}`
+            - Toolchain directive removed (patch versions handled by builder image)
+            - Dependencies updated via `go mod tidy` + `go mod vendor`
+
+            This workflow runs weekly to pick up dependency security patches (CVE fixes)
+            even when the Go minor version hasn't changed.
+
+            **Version schema:** [`go-versions/${{ inputs.version-schema }}.yaml`](https://github.com/medik8s/.github/blob/main/go-versions/${{ inputs.version-schema }}.yaml)

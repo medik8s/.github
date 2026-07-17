@@ -1,0 +1,4 @@
+# Go version schema for OCP 4.21 (RHWA 25.9)
+# Used by: main branches of all active operators
+go: "1.25"
+ci-operator-image: "rhel-9-release-golang-1.25-openshift-4.21"
