@@ -204,7 +204,7 @@ If you become a regular contributor, you may be added as a reviewer or approver.
 
 If you discover a security vulnerability, **do not** open a public issue.
 
-Please report vulnerabilities confidentially by contacting any of the maintainers listed in the repository's OWNERS file, or use the "Security and quality" tab on the repository to submit a private GitHub Security Advisory.
+Please report vulnerabilities confidentially by contacting any of the maintainers listed in the repository's OWNERS file, or use the **Security** tab on the repository to submit a private GitHub Security Advisory.
 
 ## Getting Help
 
