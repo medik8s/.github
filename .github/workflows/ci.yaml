@@ -1,0 +1,155 @@
+# Reusable CI workflow for medik8s operators hosted in medik8s/.github.
+#
+# Runs three parallel jobs: verify, unit-test, and container-build.
+# Detects available Makefile targets dynamically and skips gracefully
+# when a target is missing.
+
+# In each repo that will use this workflow add the following workflow file:
+#
+#
+# name: CI
+#
+# on:
+#   push:
+#     branches: ['**']
+#   pull_request:
+#     branches: ['**']
+#
+# jobs:
+#   ci:
+#     uses: medik8s/.github/.github/workflows/ci.yaml@main
+
+name: CI
+
+on:
+  workflow_call:
+    inputs:
+      go-version:
+        description: 'Optional Go version override if go.mod is not automatically detected'
+        type: string
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Lint & Verify
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: ${{ inputs.go-version == '' && 'go.mod' || '' }}
+          go-version: ${{ inputs.go-version }}
+          cache: true
+
+      - name: Check import sorting
+        run: |
+          if make -n test-imports >/dev/null 2>&1; then
+            make test-imports
+          else
+            echo "target 'test-imports' not found, skipping"
+          fi
+
+      - name: Verify vendor
+        run: |
+          if make -n verify-vendor >/dev/null 2>&1; then
+            make verify-vendor
+          else
+            echo "target 'verify-vendor' not found, skipping"
+          fi
+
+      - name: Verify bundle
+        run: |
+          has_target() { make -n "$1" >/dev/null 2>&1; }
+
+          if has_target verify-bundle; then
+            make verify-bundle
+          elif has_target manifests && has_target bundle-reset; then
+            make manager manifests bundle-k8s bundle-reset
+            if has_target verify; then
+              make verify
+            fi
+          else
+            echo "no bundle verification targets found, skipping"
+          fi
+
+      - name: Run go vet
+        run: |
+          if make -n vet >/dev/null 2>&1; then
+            make vet
+          else
+            echo "target 'vet' not found, skipping"
+          fi
+
+  unit-test:
+    name: Unit Test
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: ${{ inputs.go-version == '' && 'go.mod' || '' }}
+          go-version: ${{ inputs.go-version }}
+          cache: true
+
+      - name: Run unit tests
+        run: |
+          if make -n test >/dev/null 2>&1; then
+            make test
+          else
+            echo "target 'test' not found, skipping"
+          fi
+
+  container-build:
+    name: Container Build
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: ${{ inputs.go-version == '' && 'go.mod' || '' }}
+          go-version: ${{ inputs.go-version }}
+          cache: true
+
+      - name: Build container images
+        env:
+          NHC_SKIP_TEST: "true"
+        run: |
+          has_target() { make -n "$1" >/dev/null 2>&1; }
+          built=false
+
+          for target in container-build-k8s container-build-ocp container-build-community container-build-metrics; do
+            if has_target "$target"; then
+              echo "=== Building: $target ==="
+              make "$target"
+              built=true
+            fi
+          done
+
+          if [ "$built" = false ]; then
+            if has_target docker-build; then
+              echo "=== Building: docker-build ==="
+              make docker-build
+            else
+              echo "No container build target found, skipping"
+            fi
+          fi
