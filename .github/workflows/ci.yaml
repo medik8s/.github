@@ -76,8 +76,15 @@ jobs:
           if make -n verify-vendor >/dev/null 2>&1; then
             make verify-vendor
           else
-            echo "::notice::Vendor verification skipped (no verify-vendor target)"
+            go mod tidy
+            go mod vendor
+            if ! git diff --quiet go.mod go.sum vendor/; then
+              echo "::error::go.mod, go.sum or vendor/ is out of sync"
+              git diff --stat go.mod go.sum vendor/
+              exit 1
+            fi
           fi
+          go mod verify
 
       - name: Verify bundle
         run: |
