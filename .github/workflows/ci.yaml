@@ -37,6 +37,7 @@ jobs:
   verify:
     name: Lint & Verify
     runs-on: ubuntu-26.04
+    timeout-minutes: 15
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -51,24 +52,36 @@ jobs:
           go-version: ${{ inputs.go-version }}
           cache: true
 
+      - name: Run go vet
+        run: |
+          set -euo pipefail
+          if make -n vet >/dev/null 2>&1; then
+            make vet
+          else
+            echo "::notice::go vet skipped (no vet target)"
+          fi
+
       - name: Check import sorting
         run: |
+          set -euo pipefail
           if make -n test-imports >/dev/null 2>&1; then
             make test-imports
           else
-            echo "target 'test-imports' not found, skipping"
+            echo "::notice::Import sorting skipped (no test-imports target)"
           fi
 
       - name: Verify vendor
         run: |
+          set -euo pipefail
           if make -n verify-vendor >/dev/null 2>&1; then
             make verify-vendor
           else
-            echo "target 'verify-vendor' not found, skipping"
+            echo "::notice::Vendor verification skipped (no verify-vendor target)"
           fi
 
       - name: Verify bundle
         run: |
+          set -euo pipefail
           has_target() { make -n "$1" >/dev/null 2>&1; }
 
           if has_target verify-bundle; then
@@ -79,24 +92,18 @@ jobs:
               make verify
             fi
           else
-            echo "no bundle verification targets found, skipping"
-          fi
-
-      - name: Run go vet
-        run: |
-          if make -n vet >/dev/null 2>&1; then
-            make vet
-          else
-            echo "target 'vet' not found, skipping"
+            echo "::notice::Bundle verification skipped (no verify targets)"
           fi
 
   unit-test:
     name: Unit Test
     runs-on: ubuntu-26.04
+    timeout-minutes: 20
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
         with:
+          fetch-depth: 1
           persist-credentials: false
 
       - name: Set up Go
@@ -108,19 +115,22 @@ jobs:
 
       - name: Run unit tests
         run: |
+          set -euo pipefail
           if make -n test >/dev/null 2>&1; then
             make test
           else
-            echo "target 'test' not found, skipping"
+            echo "::notice::Unit tests skipped (no test target)"
           fi
 
   container-build:
     name: Container Build
     runs-on: ubuntu-26.04
+    timeout-minutes: 20
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
         with:
+          fetch-depth: 1
           persist-credentials: false
 
       - name: Set up Go
@@ -134,6 +144,7 @@ jobs:
         env:
           NHC_SKIP_TEST: "true"
         run: |
+          set -euo pipefail
           has_target() { make -n "$1" >/dev/null 2>&1; }
           built=false
 
@@ -150,6 +161,6 @@ jobs:
               echo "=== Building: docker-build ==="
               make docker-build
             else
-              echo "No container build target found, skipping"
+              echo "::notice::Container build skipped (no build target)"
             fi
           fi
