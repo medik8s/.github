@@ -117,15 +117,18 @@ jobs:
           export OCP_VERSION="${OCP_VERSION}"
           rm -rf operator/bundle && make -C operator ${{ inputs.make_targets }}
 
+      - name: Determine package name
+        run: |
+          PACKAGE_NAME=$(grep "operators.operatorframework.io.bundle.package.v1:" operator/bundle/metadata/annotations.yaml | awk '{print $2}')
+          echo "OPERATOR_NAME=${PACKAGE_NAME:-$(basename "${PROJECT}")}" >> $GITHUB_ENV
+
       - name: Copy bundle
         run: |
-          OPERATOR_NAME="$(basename "${PROJECT}")"
           mkdir -p "community/operators/${OPERATOR_NAME}/${VERSION}"
           cp -vr operator/bundle/* "community/operators/${OPERATOR_NAME}/${VERSION}"
 
       - name: Commit and push
         run: |
-          OPERATOR_NAME="$(basename "${PROJECT}")"
           COMMUNITY_SUFFIX="$(echo "${{ inputs.community }}" | tr '[:upper:]' '[:lower:]')"
           if [ "${{ inputs.community }}" == 'OKD' ] && [ -n "${OCP_VERSION}" ]; then
             BRANCH="add-${OPERATOR_NAME}-${VERSION}-${COMMUNITY_SUFFIX}-${OCP_VERSION}"
