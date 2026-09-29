@@ -1,6 +1,6 @@
 # Reusable CI workflow for medik8s operators hosted in medik8s/.github.
 #
-# Runs three parallel jobs: verify, unit-test, and container-build.
+# Runs four parallel jobs: verify, unit-test, container-build, and scorecard.
 # Detects available Makefile targets dynamically and skips gracefully
 # when a target is missing.
 
@@ -29,6 +29,16 @@ on:
         type: string
         required: false
         default: ''
+      kind-version:
+        description: 'Kind version for scorecard tests'
+        type: string
+        required: false
+        default: 'v0.33.0'
+      k8s-version:
+        description: 'Kubernetes version for scorecard tests'
+        type: string
+        required: false
+        default: 'v1.37.0'
 
 permissions:
   contents: read
@@ -36,39 +46,60 @@ permissions:
 jobs:
   verify:
     name: Lint & Verify
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: false
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version-file: ${{ inputs.go-version == '' && 'go.mod' || '' }}
           go-version: ${{ inputs.go-version }}
           cache: true
 
+      - name: Run go vet
+        run: |
+          set -euo pipefail
+          if make -n vet >/dev/null 2>&1; then
+            make vet
+          else
+            echo "::notice::go vet skipped (no vet target)"
+          fi
+
       - name: Check import sorting
         run: |
+          set -euo pipefail
           if make -n test-imports >/dev/null 2>&1; then
             make test-imports
           else
-            echo "target 'test-imports' not found, skipping"
+            echo "::notice::Import sorting skipped (no test-imports target)"
           fi
 
       - name: Verify vendor
         run: |
+          set -euo pipefail
           if make -n verify-vendor >/dev/null 2>&1; then
             make verify-vendor
           else
-            echo "target 'verify-vendor' not found, skipping"
+            go mod tidy
+            go mod vendor
+            if ! git diff --quiet go.mod go.sum vendor/ || [ -n "$(git ls-files -o vendor/)" ]; then
+              echo "::error::go.mod, go.sum or vendor/ is out of sync"
+              git diff --stat go.mod go.sum vendor/
+              git ls-files -o vendor/
+              exit 1
+            fi
           fi
+          go mod verify
 
       - name: Verify bundle
         run: |
+          set -euo pipefail
           has_target() { make -n "$1" >/dev/null 2>&1; }
 
           if has_target verify-bundle; then
@@ -79,28 +110,22 @@ jobs:
               make verify
             fi
           else
-            echo "no bundle verification targets found, skipping"
-          fi
-
-      - name: Run go vet
-        run: |
-          if make -n vet >/dev/null 2>&1; then
-            make vet
-          else
-            echo "target 'vet' not found, skipping"
+            echo "::notice::Bundle verification skipped (no verify targets)"
           fi
 
   unit-test:
     name: Unit Test
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
+          fetch-depth: 1
           persist-credentials: false
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version-file: ${{ inputs.go-version == '' && 'go.mod' || '' }}
           go-version: ${{ inputs.go-version }}
@@ -108,23 +133,26 @@ jobs:
 
       - name: Run unit tests
         run: |
+          set -euo pipefail
           if make -n test >/dev/null 2>&1; then
             make test
           else
-            echo "target 'test' not found, skipping"
+            echo "::notice::Unit tests skipped (no test target)"
           fi
 
   container-build:
     name: Container Build
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
+          fetch-depth: 1
           persist-credentials: false
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version-file: ${{ inputs.go-version == '' && 'go.mod' || '' }}
           go-version: ${{ inputs.go-version }}
@@ -134,6 +162,7 @@ jobs:
         env:
           NHC_SKIP_TEST: "true"
         run: |
+          set -euo pipefail
           has_target() { make -n "$1" >/dev/null 2>&1; }
           built=false
 
@@ -150,6 +179,54 @@ jobs:
               echo "=== Building: docker-build ==="
               make docker-build
             else
-              echo "No container build target found, skipping"
+              echo "::notice::Container build skipped (no build target)"
             fi
           fi
+
+  scorecard:
+    name: OLM Scorecard
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: ${{ inputs.go-version == '' && 'go.mod' || '' }}
+          go-version: ${{ inputs.go-version }}
+          cache: true
+
+      - name: Check if scorecard is needed
+        id: check
+        run: |
+          set -euo pipefail
+          if make -n test-scorecard >/dev/null 2>&1; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Scorecard tests skipped (no test-scorecard target)"
+          fi
+
+      - name: Start kind cluster
+        if: steps.check.outputs.run == 'true'
+        uses: helm/kind-action@v1
+        with:
+          version: ${{ inputs.kind-version }}
+          node_image: kindest/node:${{ inputs.k8s-version }}
+          kubectl_version: ${{ inputs.k8s-version }}
+          registry: true
+
+      - name: Create operator namespace
+        if: steps.check.outputs.run == 'true'
+        run: kubectl create namespace openshift-workload-availability --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Run scorecard tests
+        if: steps.check.outputs.run == 'true'
+        run: |
+          set -euo pipefail
+          make test-scorecard
