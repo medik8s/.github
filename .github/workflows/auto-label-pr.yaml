@@ -65,7 +65,13 @@ jobs:
             });
 
             const headSha = pr.head.sha;
-            console.log(`Checking status for PR #${prNumber}, SHA: ${headSha}`);
+            const prUrl = pr.html_url;
+
+            console.log('='.repeat(80));
+            console.log(`🔍 Checking CI status for PR #${prNumber}`);
+            console.log(`📍 ${prUrl}`);
+            console.log(`🔗 Commit SHA: ${headSha}`);
+            console.log('='.repeat(80));
 
             // Get all check runs for this commit
             const { data: checkRuns } = await github.rest.checks.listForRef({
@@ -175,6 +181,10 @@ jobs:
                   issue_number: prNumber,
                   labels: [labelName]
                 });
+                console.log('='.repeat(80));
+                console.log(`✅ SUCCESS: Label "${labelName}" added to PR #${prNumber}`);
+                console.log(`📍 View PR: ${prUrl}`);
+                console.log('='.repeat(80));
               } else {
                 console.log(`Label "${labelName}" already present`);
               }
@@ -187,7 +197,12 @@ jobs:
                   issue_number: prNumber,
                   name: labelName
                 });
+                console.log('='.repeat(80));
+                console.log(`⚠️  Label "${labelName}" removed from PR #${prNumber} (checks not all passing)`);
+                console.log(`📍 View PR: ${prUrl}`);
+                console.log('='.repeat(80));
               } else {
                 console.log(`Not all checks passed yet, label not present`);
+                console.log(`📍 View PR: ${prUrl}`);
               }
             }
