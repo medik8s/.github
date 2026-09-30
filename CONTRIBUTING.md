@@ -130,6 +130,24 @@ Require a live Kubernetes/OpenShift cluster with the operator deployed:
 make test-e2e    # or: make e2e-test (varies by repo)
 ```
 
+### Deploying the current source to OpenShift
+
+For PR or branch testing, build the operator with the pinned source-deployment
+toolchain, push temporary images to `ttl.sh`, and install the generated OLM
+bundle with operator-sdk:
+
+```bash
+make dev-olm-deploy
+```
+
+The temporary images expire after two hours by default. Override the duration
+and deployment namespace when needed, for example:
+
+```bash
+TTL_SH_TTL=4h DEV_OLM_OPERATOR_NAMESPACE=openshift-workload-availability make dev-olm-deploy
+make dev-olm-undeploy
+```
+
 ### Writing Tests
 
 - Place unit tests alongside the code they test (`*_test.go`)
