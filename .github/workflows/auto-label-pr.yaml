@@ -101,10 +101,12 @@ jobs:
 
             console.log(`Total checks found: ${allChecks.length}`);
 
-            // Filter out the label workflow itself to avoid circular dependency
+            // Filter out the label workflow itself and tide to avoid circular dependency
+            // Tide status depends on labels (lgtm, approved), not just CI passing
             const relevantChecks = allChecks.filter(check =>
               !check.name.includes('Auto Label PR') &&
-              !check.name.includes('label-on-success')
+              !check.name.includes('label-on-success') &&
+              check.name !== 'tide'
             );
 
             if (relevantChecks.length === 0) {
