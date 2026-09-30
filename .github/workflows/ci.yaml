@@ -88,10 +88,10 @@ jobs:
           else
             go mod tidy
             go mod vendor
-            if ! git diff --quiet go.mod go.sum vendor/ || [ -n "$(git ls-files -o vendor/)" ]; then
+            if ! git diff --quiet go.mod go.sum vendor/ || [ -n "$(git ls-files -o --exclude-standard vendor/)" ]; then
               echo "::error::go.mod, go.sum or vendor/ is out of sync"
               git diff --stat go.mod go.sum vendor/
-              git ls-files -o vendor/
+              git ls-files -o --exclude-standard vendor/
               exit 1
             fi
           fi
