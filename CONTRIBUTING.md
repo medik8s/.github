@@ -72,6 +72,88 @@ make generate    # Regenerate DeepCopy methods
 make bundle      # Regenerate OLM bundle
 ```
 
+### Deploying operator to a cluster
+
+Different make targets are available to deploy the operator from source to an existing cluster.
+
+#### OpenShift cluster via OLM:
+
+Ensure you're logged into the cluster:
+
+```bash
+export KUBECONFIG=<path_to_kubeconfig>
+```
+
+To deploy:
+
+```bash
+make dev-olm-deploy
+```
+
+To uninstall:
+
+```bash
+make dev-olm-undeploy
+```
+
+### OpenShift cluster without OLM:
+
+Ensure you're logged into the cluster and run:
+
+```bash
+export SKIP_KIND=true # Use an existing cluster, images are pushed to ttl.sh
+make dev-setup        # Configure the cluster (namespaces, cert-manager, deps)
+make dev-deploy       # Build image, install CRDs, deploy the operator
+```
+
+To redeploy the same operator after making changes:
+
+```bash
+make dev-redeploy    # Rebuild and restart pods (fast iteration)
+```
+
+To uninstall
+
+```bash
+make dev-undeploy    # Remove the operator
+```
+
+To gather debug information about deployment:
+
+```bash
+make dev-describe    # Summarize nodes, pods, CRs, leases, and events
+make dev-logs        # Tail the operator controller-manager logs
+```
+
+OLM/bundle, failure-simulation, and multi-operator targets (`dev-bundle-run`, `dev-simulate-failure`, `dev-recover`, `dev-wait`, …) are also
+provided — run `make dev-help` or see
+[`dev/README.md`](https://github.com/medik8s/tools/blob/main/dev/README.md).
+
+### Kind cluster (CI only)
+
+The operator can run on a [Kind](https://kind.sigs.k8s.io/) cluster, but Kind is
+intended for GitHub Actions CI — not local development or testing. Use it locally
+*only* to reproduce a CI failure. Note that real node reboots are disabled on Kind;
+a reboot-watcher helper simulates them by restarting the node containers.
+
+To reproduce the CI e2e run locally, exactly as GitHub Actions does it, run:
+
+```bash
+hack/local-run.sh   # Sets up the Kind cluster, starts the reboot watcher, runs e2e tests
+```
+
+Requires a Linux host with rootful containers. On Mac, a rootful Podman machine can be used.
+
+To set up a Kind cluster and deploy the operator manually:
+
+```bash
+unset SKIP_KIND   # Kind targets require SKIP_KIND to be unset
+make dev-setup    # Create Kind cluster, local image registry, webhook certs, etc.
+make dev-deploy   # Build and deploy the operator from source (no OLM)
+make dev-undeploy # Remove the operator from the cluster
+make dev-teardown # Destroy the Kind cluster
+```
+
 ## Finding Something to Work On
 
 - Look for issues labeled **`good first issue`** or **`help wanted`** across medik8s repos
