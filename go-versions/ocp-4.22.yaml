@@ -1,0 +1,4 @@
+# Go version schema for OCP 4.22 / OCP 5.0
+# Used by: main branches targeting OCP 4.22+
+go: "1.26"
+ci-operator-image: "rhel-9-release-golang-1.26-openshift-5.0"

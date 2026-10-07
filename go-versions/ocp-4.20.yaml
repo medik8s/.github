@@ -1,0 +1,4 @@
+# Go version schema for OCP 4.20
+# Used by: older release branches (e.g. FAR release-0.6, release-0.7)
+go: "1.24"
+ci-operator-image: "rhel-9-release-golang-1.24-openshift-4.20"
