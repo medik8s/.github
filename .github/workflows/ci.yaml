@@ -158,6 +158,12 @@ jobs:
           go-version: ${{ inputs.go-version }}
           cache: true
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Build container images
         env:
           NHC_SKIP_TEST: "true"
@@ -182,6 +188,19 @@ jobs:
               echo "::notice::Container build skipped (no build target)"
             fi
           fi
+
+      - name: Validate multi-platform Dockerfile
+        run: |
+          set -euo pipefail
+          if ! make -n docker-buildx >/dev/null 2>&1; then
+            echo "::notice::Multi-platform build skipped (no docker-buildx target)"
+            exit 0
+          fi
+          echo "=== Validating multi-platform build ==="
+          docker buildx build \
+            --platform=linux/amd64,linux/arm64,linux/ppc64le,linux/s390x \
+            --output type=image,push=false \
+            -f Dockerfile .
 
   scorecard:
     name: OLM Scorecard
