@@ -1,0 +1,39 @@
+name: Test PR Check Label
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/*pr*label*.yaml'
+      - 'scripts/pr-check-label.cjs'
+      - 'tests/pr-check-label.test.cjs'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'tsconfig.json'
+      - '.prettierrc.json'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/*pr*label*.yaml'
+      - 'scripts/pr-check-label.cjs'
+      - 'tests/pr-check-label.test.cjs'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'tsconfig.json'
+      - '.prettierrc.json'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run check
