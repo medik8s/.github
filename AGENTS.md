@@ -117,3 +117,6 @@ code.
 - Brief commit messages; sign off with `-s`.
 - Reference the relevant issue or PR number when applicable.
 - Use WIP in the title when creating draft PRs to save CI resources.
+- Before creating PRs or issues with `gh api`, read and follow the applicable `CONTRIBUTING.md` and repository templates (use shared medik8s defaults when not overridden).
+- Keep PR descriptions in the PR template’s format and create issues using the matching issue template, completing all required fields.
+- Apply template labels and other required metadata explicitly; `gh api` does not apply templates automatically.
