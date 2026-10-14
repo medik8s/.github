@@ -27,9 +27,56 @@
 
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
+const { readFileSync } = require("node:fs");
+const { join } = require("node:path");
 const evaluate = require("../scripts/pr-check-label.cjs");
 process.env.LABEL_NAME = "all-checks-passed";
 process.env.IGNORED_CHECKS = '["tide"]';
+
+/**
+ * Read the top-level permissions block used by our label workflow files.
+ * @param {string} filename
+ * @returns {Record<string, string>}
+ */
+function workflowPermissions(filename) {
+  const source = readFileSync(
+    join(__dirname, "../.github/workflows", filename),
+    "utf8",
+  );
+  const block = source.match(/^permissions:\n((?: {2}[^\n]*\n)+)/m);
+
+  assert.ok(block, `${filename} must declare token permissions`);
+
+  return Object.fromEntries(
+    block[1]
+      .trim()
+      .split("\n")
+      .map((line) => line.trim().split(/:\s*/)),
+  );
+}
+
+test("both label workflows grant PR write access and repository label access", () => {
+  for (const filename of ["auto-label-pr.yaml", "pr-check-label.yaml"]) {
+    const permissions = workflowPermissions(filename);
+
+    assert.equal(permissions["pull-requests"], "write", filename);
+    assert.equal(permissions.issues, "write", filename);
+  }
+});
+
+test("the caller grants every permission requested by the reusable workflow", () => {
+  const caller = workflowPermissions("auto-label-pr.yaml");
+  const shared = workflowPermissions("pr-check-label.yaml");
+  /** @type {Record<string, number>} */
+  const access = { none: 0, read: 1, write: 2 };
+
+  for (const [permission, level] of Object.entries(shared)) {
+    assert.ok(
+      access[caller[permission] || "none"] >= access[level],
+      `caller must grant ${permission}: ${level}`,
+    );
+  }
+});
 
 /** @param {number} [number=1] @returns {PullRequest} */
 const pr = (number = 1) => ({

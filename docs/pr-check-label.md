@@ -44,7 +44,7 @@ on:
 
 permissions:
   contents: read
-  pull-requests: read
+  pull-requests: write
   issues: write
   checks: read
   statuses: read
@@ -67,7 +67,10 @@ run reconciles all open PRs every 30 minutes; schedules can be delayed by GitHub
 [GitHub's event documentation](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows).
 
 The workflow uses the caller repository's `GITHUB_TOKEN`; no PAT or inherited
-secrets are needed. It creates the label if missing. It supports fork PRs using
+secrets are needed. Both the caller and reusable workflow must grant
+`pull-requests: write` to add or remove PR labels. `issues: write` is also granted
+for repository label creation. A reusable workflow cannot increase the caller's
+token permissions. It creates the label if missing. It supports fork PRs using
 base-repository events and API reads. It checks out the shared script from
 `medik8s/.github` and executes that trusted automation; it never executes PR code.
 Merge the reusable workflow here before enabling callers elsewhere.
