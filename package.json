@@ -1,0 +1,20 @@
+{
+  "name": "medik8s-github-automation",
+  "version": "0.0.0",
+  "private": true,
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "format": "prettier --write \"scripts/**/*.cjs\" \"tests/**/*.cjs\"",
+    "format:check": "prettier --check \"scripts/**/*.cjs\" \"tests/**/*.cjs\"",
+    "typecheck": "tsc --project tsconfig.json",
+    "test": "node tests/pr-check-label.test.cjs",
+    "check": "npm run format:check && npm run typecheck && npm test"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "prettier": "3.9.10",
+    "typescript": "7.0.2"
+  }
+}
