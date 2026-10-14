@@ -1,10 +1,14 @@
 # Reusable CI workflow for medik8s operators hosted in medik8s/.github.
 #
-# Runs four parallel jobs: verify, unit-test, container-build, and scorecard.
-# Detects available Makefile targets dynamically and skips gracefully
-# when a target is missing.
+# Runs five parallel jobs: verify, unit-test, container-build, scorecard, and
+# pr-description. Detects available Makefile targets dynamically and skips
+# gracefully when a target is missing.
 
-# In each repo that will use this workflow add the following workflow file:
+# In each repo that will use this workflow add the following workflow file.
+# The `edited` and `labeled`/`unlabeled` PR types let the description check
+# re-run when an author fixes the description or a maintainer applies the
+# skip label, and `pull-requests: write` lets it ask CodeRabbit for a test
+# plan. See docs/pr-description-check.md.
 #
 #
 # name: CI
@@ -14,6 +18,11 @@
 #     branches: ['**']
 #   pull_request:
 #     branches: ['**']
+#     types: [opened, reopened, synchronize, edited, labeled, unlabeled]
+#
+# permissions:
+#   contents: read
+#   pull-requests: write
 #
 # jobs:
 #   ci:
@@ -39,6 +48,26 @@ on:
         type: string
         required: false
         default: 'v1.37.0'
+      script-ref:
+        description: 'Trusted branch, tag, or SHA in medik8s/.github containing the shared scripts'
+        type: string
+        required: false
+        default: 'main'
+      description-min-words:
+        description: 'Words a PR template section must have when it carries no issue reference'
+        type: number
+        required: false
+        default: 15
+      jira-projects:
+        description: 'Comma-separated Jira project keys accepted as an issue reference'
+        type: string
+        required: false
+        default: 'RHWA,OCPBUGS'
+      description-skip-label:
+        description: 'Label that bypasses the PR description check'
+        type: string
+        required: false
+        default: 'skip-pr-description-check'
 
 permissions:
   contents: read
@@ -230,3 +259,35 @@ jobs:
         run: |
           set -euo pipefail
           make test-scorecard
+
+  pr-description:
+    name: PR Description
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      # A plain checkout in a reusable workflow retrieves the caller
+      # repository, so select medik8s/.github explicitly.
+      - name: Check out shared description script
+        uses: actions/checkout@v7
+        with:
+          repository: medik8s/.github
+          ref: ${{ inputs.script-ref }}
+          path: shared-pr-description
+          sparse-checkout: scripts/pr-description-check.cjs
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Check PR description against the template
+        uses: actions/github-script@v7
+        env:
+          MIN_WORDS: ${{ inputs.description-min-words }}
+          JIRA_PROJECTS: ${{ inputs.jira-projects }}
+          SKIP_LABEL: ${{ inputs.description-skip-label }}
+        with:
+          script: |
+            const checkDescription = require('./shared-pr-description/scripts/pr-description-check.cjs');
+            await checkDescription({github, context, core});
