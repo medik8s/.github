@@ -41,7 +41,17 @@ permissions:
 jobs:
   push_to_registry:
     name: Build and push images to ${{ inputs.image_registry }}
+    # Only the medik8s repositories publish. Forks enable Actions to get CI on
+    # their own branches, and a push to a fork's main would otherwise either
+    # fail for lack of credentials or, for a fork owner who has Quay
+    # credentials, overwrite the shared images with unreviewed code.
+    if: ${{ github.repository_owner == 'medik8s' }}
     runs-on: ubuntu-24.04
+    # Queue pushes of the same ref so the last commit wins; do not cancel a run
+    # in progress, it may be half way through pushing a manifest.
+    concurrency:
+      group: post-submit-${{ github.ref }}
+      cancel-in-progress: false
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -116,9 +126,15 @@ jobs:
         # assign it unconditionally, so an environment variable would be ignored.
         run: |
           set -euo pipefail
+          # MAKE_TARGETS and MAKE_VARS are unquoted on the make command line on
+          # purpose, so that they split into separate arguments. Disable
+          # pathname expansion to keep the splitting without letting a '*' in
+          # an input expand against the work tree.
+          set -f
           version_args=()
           if [ -n "${RELEASE_VERSION}" ]; then
             version_args+=("VERSION=${RELEASE_VERSION}")
           fi
           echo "Running: make ${MAKE_TARGETS} ${MAKE_VARS} IMAGE_REGISTRY=${IMAGE_REGISTRY} IMAGE_TAG=${IMAGE_TAG} ${version_args[*]}"
+          # shellcheck disable=SC2086 # intentional word splitting, see above
           make ${MAKE_TARGETS} ${MAKE_VARS} IMAGE_REGISTRY="${IMAGE_REGISTRY}" IMAGE_TAG="${IMAGE_TAG}" "${version_args[@]}"
