@@ -1,13 +1,12 @@
 name: Post Submit
-# Reusable post submit job for the medik8s operators: builds the operator images
-# and pushes them to the registry on every push to a branch, tagging them per
-# branch, so that no branch can overwrite the images of another branch:
+# Reusable image publishing job for branch and tag pushes:
 #
-#   - the repository's default branch -> the floating "latest" tag
-#   - every other branch              -> "v<version>" of that branch's Makefile
+#   - main                       -> latest
+#   - release-<version>           -> <version>-latest
+#   - medik8s-<version>           -> <version>-latest
+#   - Git tag <tag> or v<tag>     -> v<tag>
 #
-# The branch itself is never named here, so the calling workflow can be
-# cherry-picked as is to every version branch.
+# Callers select these push events. Git version tags also set the bundle VERSION.
 on:
   workflow_call:
     inputs:
@@ -55,35 +54,49 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Resolve image tag for this branch
+      - name: Resolve image tag and release version
         id: resolve
         env:
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           IMAGE_REGISTRY: ${{ inputs.image_registry }}
         shell: bash
         run: |
           set -euo pipefail
-          if [ "${GITHUB_REF_NAME}" = "${DEFAULT_BRANCH}" ]; then
-            tag="latest"
-          else
-            # Only some of the operators have a 'print-image-tag' target, so fall
-            # back to asking make for IMAGE_TAG through a target injected on the fly.
-            if ! tag="$(make -s print-image-tag 2>/dev/null)" || [ -z "${tag}" ]; then
-              tag="$(make -s -f Makefile -f <(printf 'medik8s-ci-print-image-tag:\n\t@echo $(IMAGE_TAG)\n') medik8s-ci-print-image-tag)"
-            fi
-            if [ -z "${tag}" ]; then
-              echo "::error::Could not determine the image tag of branch '${GITHUB_REF_NAME}'. Does its Makefile define IMAGE_TAG?"
+          version=""
+          case "${GITHUB_REF}" in
+            refs/heads/main)
+              tag="latest"
+              ;;
+            refs/heads/release-*)
+              tag="${GITHUB_REF_NAME#release-}-latest"
+              ;;
+            refs/heads/medik8s-*)
+              tag="${GITHUB_REF_NAME#medik8s-}-latest"
+              ;;
+            refs/tags/*)
+              tag="v${GITHUB_REF_NAME#v}"
+              number='(0|[1-9][0-9]*)'
+              identifier="(${number}|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
+              semver="^${number}\\.${number}\\.${number}(-${identifier}(\\.${identifier})*)?$"
+              if [[ "${tag#v}" =~ ${semver} ]]; then
+                version="${tag#v}"
+              fi
+              ;;
+            *)
+              echo "::error::Unsupported Git ref: ${GITHUB_REF}"
               exit 1
-            fi
-            if [ "${tag}" = "latest" ] || [ "${tag}" = "v0.0.1" ]; then
-              echo "::error::Branch '${GITHUB_REF_NAME}' resolved to the placeholder image tag '${tag}': 'latest' is reserved for the '${DEFAULT_BRANCH}' branch, and 'v0.0.1' is the unset default version. Set DEFAULT_VERSION in the Makefile of this branch to the version of the branch before publishing, and drop the legacy 'ifeq (\$(VERSION), \$(DEFAULT_VERSION))' guard that maps it to 'latest'."
-              exit 1
-            fi
+              ;;
+          esac
+          if [[ ! "${tag}" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+            echo "::error::Git ref '${GITHUB_REF}' produces an invalid image tag: ${tag}"
+            exit 1
           fi
-          echo "Publishing images of branch '${GITHUB_REF_NAME}' with tag '${tag}'"
-          echo "image_tag=${tag}" >> "${GITHUB_OUTPUT}"
-          # the login action wants the host only, not the whole image base URL
-          echo "registry_host=${IMAGE_REGISTRY%%/*}" >> "${GITHUB_OUTPUT}"
+          echo "Publishing images of '${GITHUB_REF}' with tag '${tag}'"
+          {
+            echo "image_tag=${tag}"
+            echo "version=${version}"
+            # the login action wants the host only, not the whole image base URL
+            echo "registry_host=${IMAGE_REGISTRY%%/*}"
+          } >> "${GITHUB_OUTPUT}"
 
       - name: Log in to the registry
         uses: docker/login-action@v4
@@ -98,9 +111,14 @@ jobs:
           MAKE_VARS: ${{ inputs.make_vars }}
           IMAGE_REGISTRY: ${{ inputs.image_registry }}
           IMAGE_TAG: ${{ steps.resolve.outputs.image_tag }}
+          RELEASE_VERSION: ${{ steps.resolve.outputs.version }}
         # IMAGE_TAG has to be passed on the command line: the operator Makefiles
         # assign it unconditionally, so an environment variable would be ignored.
         run: |
           set -euo pipefail
-          echo "Running: make ${MAKE_TARGETS} IMAGE_REGISTRY=${IMAGE_REGISTRY} IMAGE_TAG=${IMAGE_TAG} ${MAKE_VARS}"
-          make ${MAKE_TARGETS} IMAGE_REGISTRY="${IMAGE_REGISTRY}" IMAGE_TAG="${IMAGE_TAG}" ${MAKE_VARS}
+          version_args=()
+          if [ -n "${RELEASE_VERSION}" ]; then
+            version_args+=("VERSION=${RELEASE_VERSION}")
+          fi
+          echo "Running: make ${MAKE_TARGETS} ${MAKE_VARS} IMAGE_REGISTRY=${IMAGE_REGISTRY} IMAGE_TAG=${IMAGE_TAG} ${version_args[*]}"
+          make ${MAKE_TARGETS} ${MAKE_VARS} IMAGE_REGISTRY="${IMAGE_REGISTRY}" IMAGE_TAG="${IMAGE_TAG}" "${version_args[@]}"
