@@ -151,6 +151,10 @@ jobs:
           # Install operator-sdk via the Makefile target so we reuse the cached binary.
           make operator-sdk
           SDK=$(find bin -name 'operator-sdk' -type f | head -1)
+          if [[ -z "$SDK" ]]; then
+            echo "::error::operator-sdk binary not found under bin/ after 'make operator-sdk'"
+            exit 1
+          fi
           # The validator tries to docker-pull the image to cross-check platforms.
           # In PR CI the image does not exist yet; the validator still exits 0 for
           # image-pull failures (they surface as warnings, not errors). Real OLM
