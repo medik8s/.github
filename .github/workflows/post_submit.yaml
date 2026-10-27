@@ -1,0 +1,140 @@
+name: Post Submit
+# Reusable image publishing job for branch and tag pushes:
+#
+#   - main                       -> latest
+#   - release-<version>           -> <version>-latest
+#   - medik8s-<version>           -> <version>-latest
+#   - Git tag <tag> or v<tag>     -> v<tag>
+#
+# Callers select these push events. Git version tags also set the bundle VERSION.
+on:
+  workflow_call:
+    inputs:
+      make_targets:
+        description: "The Makefile targets that build and push the images, e.g. 'container-build-k8s container-push'"
+        required: true
+        type: string
+      make_vars:
+        description: "Additional VAR=VALUE arguments for make, e.g. 'CONTAINER_TOOL=docker'"
+        required: false
+        default: ""
+        type: string
+      image_registry:
+        description: "The registry to push the images to"
+        required: false
+        default: "quay.io/medik8s"
+        type: string
+      setup_go:
+        description: "Set up Go before building, disable it for repositories without a go.mod"
+        required: false
+        default: true
+        type: boolean
+    secrets:
+      QUAY_USERNAME:
+        required: true
+      QUAY_PASSWORD:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  push_to_registry:
+    name: Build and push images to ${{ inputs.image_registry }}
+    # Only the medik8s repositories publish. Forks enable Actions to get CI on
+    # their own branches, and a push to a fork's main would otherwise either
+    # fail for lack of credentials or, for a fork owner who has Quay
+    # credentials, overwrite the shared images with unreviewed code.
+    if: ${{ github.repository_owner == 'medik8s' }}
+    runs-on: ubuntu-24.04
+    # Queue pushes of the same ref so the last commit wins; do not cancel a run
+    # in progress, it may be half way through pushing a manifest.
+    concurrency:
+      group: post-submit-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        if: ${{ inputs.setup_go }}
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Resolve image tag and release version
+        id: resolve
+        env:
+          IMAGE_REGISTRY: ${{ inputs.image_registry }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=""
+          case "${GITHUB_REF}" in
+            refs/heads/main)
+              tag="latest"
+              ;;
+            refs/heads/release-*)
+              tag="${GITHUB_REF_NAME#release-}-latest"
+              ;;
+            refs/heads/medik8s-*)
+              tag="${GITHUB_REF_NAME#medik8s-}-latest"
+              ;;
+            refs/tags/*)
+              tag="v${GITHUB_REF_NAME#v}"
+              number='(0|[1-9][0-9]*)'
+              identifier="(${number}|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
+              semver="^${number}\\.${number}\\.${number}(-${identifier}(\\.${identifier})*)?$"
+              if [[ "${tag#v}" =~ ${semver} ]]; then
+                version="${tag#v}"
+              fi
+              ;;
+            *)
+              echo "::error::Unsupported Git ref: ${GITHUB_REF}"
+              exit 1
+              ;;
+          esac
+          if [[ ! "${tag}" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+            echo "::error::Git ref '${GITHUB_REF}' produces an invalid image tag: ${tag}"
+            exit 1
+          fi
+          echo "Publishing images of '${GITHUB_REF}' with tag '${tag}'"
+          {
+            echo "image_tag=${tag}"
+            echo "version=${version}"
+            # the login action wants the host only, not the whole image base URL
+            echo "registry_host=${IMAGE_REGISTRY%%/*}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Log in to the registry
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.QUAY_USERNAME }}
+          password: ${{ secrets.QUAY_PASSWORD }}
+          registry: ${{ steps.resolve.outputs.registry_host }}
+
+      - name: Build and push images
+        env:
+          MAKE_TARGETS: ${{ inputs.make_targets }}
+          MAKE_VARS: ${{ inputs.make_vars }}
+          IMAGE_REGISTRY: ${{ inputs.image_registry }}
+          IMAGE_TAG: ${{ steps.resolve.outputs.image_tag }}
+          RELEASE_VERSION: ${{ steps.resolve.outputs.version }}
+        # IMAGE_TAG has to be passed on the command line: the operator Makefiles
+        # assign it unconditionally, so an environment variable would be ignored.
+        run: |
+          set -euo pipefail
+          # MAKE_TARGETS and MAKE_VARS are unquoted on the make command line on
+          # purpose, so that they split into separate arguments. Disable
+          # pathname expansion to keep the splitting without letting a '*' in
+          # an input expand against the work tree.
+          set -f
+          version_args=()
+          if [ -n "${RELEASE_VERSION}" ]; then
+            version_args+=("VERSION=${RELEASE_VERSION}")
+          fi
+          echo "Running: make ${MAKE_TARGETS} ${MAKE_VARS} IMAGE_REGISTRY=${IMAGE_REGISTRY} IMAGE_TAG=${IMAGE_TAG} ${version_args[*]}"
+          # shellcheck disable=SC2086 # intentional word splitting, see above
+          make ${MAKE_TARGETS} ${MAKE_VARS} IMAGE_REGISTRY="${IMAGE_REGISTRY}" IMAGE_TAG="${IMAGE_TAG}" "${version_args[@]}"
