@@ -9,6 +9,15 @@ Special repository for organization-wide reusable Templates, Workflows, and comm
 - [Pull Request Template](.github/PULL_REQUEST_TEMPLATE.md)
 - [Community Release Scripts](scripts/)
 - [PR CI Label Workflow](docs/pr-check-label.md)
+- [Upgrade CI Status (wiki content)](docs/upgrade-status.md)
+
+## Publishing upgrade status to the wiki
+
+After [openshift/release#87804](https://github.com/openshift/release/pull/87804)
+merges and the scheduled jobs run, copy [docs/upgrade-status.md](docs/upgrade-status.md)
+into the [wiki home page](https://github.com/medik8s/.github/wiki), below the existing
+e2e status tables. The wiki is stored separately, so merging this PR does not
+publish the page. Prow supplies the live badge status after the Markdown is copied.
 
 ## JavaScript development
 
