@@ -104,6 +104,20 @@ make dev-teardown # Destroy the Kind cluster
 
 - Never widen RBAC beyond the generated `config/rbac/` manifests without review.
 
+## Writing Red Hat Knowledgebase (KCS) content
+
+`docs/faq_draft.md` is destined for the Red Hat Customer Portal, so it uses Red Hat
+Knowledgebase markdown instead of GitHub-flavored markdown. When — and only when —
+editing that file, follow [`docs/AGENTS.md`](docs/AGENTS.md) (derived from
+[Markdown Help, article 7056942](https://access.redhat.com/articles/7056942)).
+In short: markdown only — no inline HTML, write CommonMark-compatible syntax,
+reserve `#` for the article title, indent with spaces only, and avoid the
+constructs flagged there as non-CommonMark (footnotes, internal anchors, reliance
+on soft line breaks).
+
+Every other markdown file in this repository, `docs/` included, uses normal
+GitHub-flavored markdown and is not covered by those rules.
+
 ## Keeping the docs current
 
 If your changes affect anything documented — build commands, CRD semantics,
