@@ -140,6 +140,30 @@ jobs:
             echo "::notice::Unit tests skipped (no test target)"
           fi
 
+      - name: Validate multiarch OLM bundle
+        run: |
+          set -euo pipefail
+          # Only validate repos that declare arch support in their bundle.
+          if ! grep -rl 'operatorframework\.io/arch\.' bundle/manifests/ >/dev/null 2>&1; then
+            echo "::notice::Multiarch OLM validation skipped (no arch labels in bundle)"
+            exit 0
+          fi
+          # Install operator-sdk via the Makefile target so we reuse the cached binary.
+          make operator-sdk
+          SDK=$(find bin -name 'operator-sdk' -type f | head -1)
+          if [[ -z "$SDK" ]]; then
+            echo "::error::operator-sdk binary not found under bin/ after 'make operator-sdk'"
+            exit 1
+          fi
+          # The validator tries to docker-pull the image to cross-check platforms.
+          # In PR CI the image does not exist yet; the validator still exits 0 for
+          # image-pull failures (they surface as warnings, not errors). Real OLM
+          # schema violations cause a non-zero exit and fail CI.
+          # Run after verify-unchanged has already passed so CSV mutations don't break CI.
+          "$SDK" bundle validate ./bundle --select-optional name=multiarch
+          # Restore any mutations the validator wrote to the CSV.
+          git checkout -- bundle/manifests/ 2>/dev/null || true
+
   container-build:
     name: Container Build
     runs-on: ubuntu-26.04
@@ -157,6 +181,12 @@ jobs:
           go-version-file: ${{ inputs.go-version == '' && 'go.mod' || '' }}
           go-version: ${{ inputs.go-version }}
           cache: true
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
       - name: Build container images
         env:
@@ -182,6 +212,19 @@ jobs:
               echo "::notice::Container build skipped (no build target)"
             fi
           fi
+
+      - name: Validate multi-platform Dockerfile
+        run: |
+          set -euo pipefail
+          if ! make -n docker-buildx >/dev/null 2>&1; then
+            echo "::notice::Multi-platform build skipped (no docker-buildx target)"
+            exit 0
+          fi
+          echo "=== Validating multi-platform build ==="
+          docker buildx build \
+            --platform=linux/amd64,linux/arm64,linux/ppc64le,linux/s390x \
+            --output type=image,push=false \
+            -f Dockerfile .
 
   scorecard:
     name: OLM Scorecard
