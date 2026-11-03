@@ -1,8 +1,9 @@
 # Reusable CI workflow for medik8s operators hosted in medik8s/.github.
 #
-# Runs four parallel jobs: verify, unit-test, container-build, and scorecard.
-# Detects available Makefile targets dynamically and skips gracefully
-# when a target is missing.
+# Runs these parallel jobs: verify, unit-test, container-build,
+# validate-multiarch (plus its multiarch-gate aggregate), and scorecard.
+# Detects available Makefile targets dynamically and skips gracefully when a
+# target is missing.
 
 # In each repo that will use this workflow add the following workflow file:
 #
@@ -167,7 +168,7 @@ jobs:
   container-build:
     name: Container Build
     runs-on: ubuntu-26.04
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -182,9 +183,10 @@ jobs:
           go-version: ${{ inputs.go-version }}
           cache: true
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
+      # No QEMU here on purpose: every container-build-*/docker-build target in
+      # the medik8s operators builds for the runner's native linux/amd64 only.
+      # If a repo ever points one of them at a non-native platform, add QEMU
+      # back or the build will fail with "exec format error".
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -213,18 +215,102 @@ jobs:
             fi
           fi
 
-      - name: Validate multi-platform Dockerfile
+  # Split out of container-build so the slow emulated builds no longer gate the
+  # "Container Build" required status check. One runner per platform: the four
+  # used to share a single runner, which made them time out.
+  #
+  # The per-platform contexts are named after the matrix leg, so their names
+  # change whenever the platform list does. Gate on the "Multi-arch Validation"
+  # aggregate below instead of on these four directly.
+  validate-multiarch:
+    name: Validate Dockerfile (${{ matrix.platform }})
+    runs-on: ubuntu-26.04
+    # The builder stage of the operator Dockerfiles is not pinned to
+    # $BUILDPLATFORM, so a non-amd64 build compiles Go under full QEMU
+    # emulation. Budget accordingly until the Dockerfiles cross-compile.
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - linux/amd64
+          - linux/arm64
+          - linux/ppc64le
+          - linux/s390x
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      # Checked before the QEMU/buildx setup so repos without the target cost
+      # a few seconds instead of a few minutes.
+      - name: Check if multi-platform validation is needed
+        id: check
         run: |
           set -euo pipefail
-          if ! make -n docker-buildx >/dev/null 2>&1; then
+          if make -n docker-buildx >/dev/null 2>&1; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
             echo "::notice::Multi-platform build skipped (no docker-buildx target)"
-            exit 0
           fi
-          echo "=== Validating multi-platform build ==="
+
+      - name: Set up QEMU
+        if: steps.check.outputs.run == 'true' && matrix.platform != 'linux/amd64'
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        if: steps.check.outputs.run == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Validate platform build
+        if: steps.check.outputs.run == 'true'
+        run: |
+          set -euo pipefail
+          echo "=== Validating build for ${{ matrix.platform }} ==="
           docker buildx build \
-            --platform=linux/amd64,linux/arm64,linux/ppc64le,linux/s390x \
+            --platform=${{ matrix.platform }} \
             --output type=image,push=false \
             -f Dockerfile .
+
+  # Single stable status context that succeeds only once every platform leg has
+  # succeeded. Because the matrix uses fail-fast: false, the aggregated result
+  # is "success" only when none of the four failed or were cancelled.
+  #
+  # Add "ci / Multi-arch Validation" to branch protection as a required check.
+  # It replaces the merge gate that the multi-platform build used to get for
+  # free by living inside "Container Build", and unlike the four per-platform
+  # contexts its name is stable across changes to the platform list.
+  multiarch-gate:
+    name: Multi-arch Validation
+    needs: validate-multiarch
+    # Must still report when a matrix leg fails, otherwise a required check
+    # that never reports would block every PR.
+    if: always()
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    steps:
+      - name: Check per-platform results
+        env:
+          RESULT: ${{ needs.validate-multiarch.result }}
+        run: |
+          set -euo pipefail
+          case "$RESULT" in
+            success)
+              echo "All platform builds succeeded."
+              ;;
+            skipped)
+              # Repos without a docker-buildx target skip the build at step
+              # level, so this is a pass, not a missing result.
+              echo "::notice::Multi-arch validation was skipped."
+              ;;
+            *)
+              echo "::error::Multi-arch validation did not pass (result: $RESULT)"
+              exit 1
+              ;;
+          esac
 
   scorecard:
     name: OLM Scorecard
