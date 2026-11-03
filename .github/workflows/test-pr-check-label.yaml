@@ -1,11 +1,14 @@
+# Formatting, type, and behavior checks for every shared script in scripts/.
+# The workflow name is kept for continuity with existing check references.
 name: Test PR Check Label
 
 on:
   pull_request:
     paths:
+      - '.github/workflows/ci.yaml'
       - '.github/workflows/*pr*label*.yaml'
-      - 'scripts/pr-check-label.cjs'
-      - 'tests/pr-check-label.test.cjs'
+      - 'scripts/*.cjs'
+      - 'tests/*.cjs'
       - 'package.json'
       - 'package-lock.json'
       - 'tsconfig.json'
@@ -13,9 +16,10 @@ on:
   push:
     branches: [main]
     paths:
+      - '.github/workflows/ci.yaml'
       - '.github/workflows/*pr*label*.yaml'
-      - 'scripts/pr-check-label.cjs'
-      - 'tests/pr-check-label.test.cjs'
+      - 'scripts/*.cjs'
+      - 'tests/*.cjs'
       - 'package.json'
       - 'package-lock.json'
       - 'tsconfig.json'

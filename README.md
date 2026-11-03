@@ -9,6 +9,7 @@ Special repository for organization-wide reusable Templates, Workflows, and comm
 - [Pull Request Template](.github/PULL_REQUEST_TEMPLATE.md)
 - [Community Release Scripts](scripts/)
 - [PR CI Label Workflow](docs/pr-check-label.md)
+- [PR Description Check](docs/pr-description-check.md)
 
 ## JavaScript development
 
