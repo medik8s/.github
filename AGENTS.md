@@ -98,6 +98,8 @@ make dev-teardown # Destroy the Kind cluster
 
 - Go, Kubebuilder v4, controller-runtime; follow standard medik8s patterns.
 - Imports must be sorted (`make fix-imports`).
+- Changes to build files, Makefiles, and build scripts must work on both macOS and Linux. Use commands and options that both platforms support.
+- If a repository provides `bundle-reset`, run `make bundle-reset` before committing bundle changes. Check and commit the generated files. Do not assume that `make test-linux` checks generated bundle files.
 - No direct commits to `main`; open a PR.
 
 ## Security
