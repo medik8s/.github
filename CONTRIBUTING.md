@@ -72,6 +72,11 @@ make generate    # Regenerate DeepCopy methods
 make bundle      # Regenerate OLM bundle
 ```
 
+If the repository provides `bundle-reset`, run `make bundle-reset` before committing bundle changes.
+Check and commit the generated files.
+This target uses the repository's default version and clears build metadata.
+The `test-linux` target can omit bundle generation and checks for uncommitted changes.
+
 ### Deploying operator to a cluster
 
 Different make targets are available to deploy the operator from source to an existing cluster.
