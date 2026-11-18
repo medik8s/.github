@@ -28,7 +28,10 @@ We're a distributed team, so our default is **open, written, and
 asynchronous**:
 
 - Technical discussions happen in GitHub issues and PRs, where they're
-  searchable and benefit the whole community.
+  searchable and benefit the whole community. **When you must communicate
+  something important, use multiple channels — we're a very distributed team.
+  Repeat it in Slack, email, and team meetings until the point has landed;
+  one post in one channel is not communication.**
 - **Acknowledge, don't go silent.** When a question, review request, or issue
   is directed at you, a quick "seen, will get to this next week" is always an
   acceptable answer. Silence is the only real failure.
