@@ -8,8 +8,8 @@ definitions in [`openshift/release`](https://github.com/openshift/release).
 
 | Page | File | Behavior |
 | --- | --- | --- |
-| Home (Current CI Status) | `Home.md` | Only `*-daily-*` periodics; only the marker block is overwritten |
-| Weekly CI Status | `Weekly-CI-Status.md` | Fully regenerated |
+| Home (Current CI Status) | `Home.md` | Only `*-daily-*` periodics with Prow `badge.svg` + history link; only the marker block is overwritten |
+| Weekly CI Status | `Weekly-CI-Status.md` | Fully regenerated (same badge style) |
 | All Jobs | `All-Jobs.md` | Fully regenerated; sections: PRs (general), PRs (by operator), Periodics, Other |
 
 ### Home markers

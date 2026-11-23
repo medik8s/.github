@@ -116,6 +116,14 @@ test("renderers include expected headings and no badges on All Jobs", () => {
   assert.match(daily, /^### upstream$/m);
   assert.match(daily, /#### Operators/);
   assert.match(daily, /e2e-far-daily-aws/);
+  assert.match(
+    daily,
+    /badge\.svg\?jobs=periodic-ci-openshift-rhwa-system-tests-main-5\.0-upstream-e2e-far-daily-aws/,
+  );
+  assert.match(
+    daily,
+    /job-history\/gs\/origin-ci-test\/logs\/periodic-ci-openshift-rhwa-system-tests-main-5\.0-upstream-e2e-far-daily-aws/,
+  );
   assert.doesNotMatch(daily, /fbc-upgrade/);
   assert.doesNotMatch(daily, /konflux/);
   assert.doesNotMatch(daily, /## FAR/);

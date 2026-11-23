@@ -35,6 +35,7 @@ const DAILY_START = "<!-- AUTO-GENERATED:DAILY-START -->";
 const DAILY_END = "<!-- AUTO-GENERATED:DAILY-END -->";
 const HISTORY_BASE =
   "https://prow.ci.openshift.org/job-history/gs/origin-ci-test/logs";
+const BADGE_BASE = "https://prow.ci.openshift.org/badge.svg?jobs=";
 const VARIANT_LABEL = "ci-operator.openshift.io/variant";
 
 /** @type {Record<string, string>} */
@@ -330,6 +331,25 @@ function jobHistoryUrl(job) {
  * @param {DiscoveredJob} job
  * @returns {string}
  */
+function jobBadgeUrl(job) {
+  return `${BADGE_BASE}${encodeURIComponent(job.name)}`;
+}
+
+/**
+ * Prow status badge linked to job history (matches the current wiki style).
+ * @param {DiscoveredJob} job
+ * @returns {string}
+ */
+function jobStatusBadge(job) {
+  const label = displayLabel(job);
+
+  return `[![${label}](${jobBadgeUrl(job)})](${jobHistoryUrl(job)})`;
+}
+
+/**
+ * @param {DiscoveredJob} job
+ * @returns {string}
+ */
 function displayLabel(job) {
   if (job.target) {
     return job.target;
@@ -433,32 +453,67 @@ function jobBucket(job) {
 }
 
 /**
+ * Map a target/name fragment to a friendly operator title.
+ * @param {string} text
+ * @returns {string | null}
+ */
+function operatorTitleFromText(text) {
+  /** @type {[RegExp, string][]} */
+  const patterns = [
+    [/\bfar\b/i, COMPONENT_TITLES["fence-agents-remediation"]],
+    [/\bmdr\b/i, COMPONENT_TITLES["machine-deletion-remediation"]],
+    [/\bnhc\b/i, COMPONENT_TITLES["node-healthcheck-operator"]],
+    [/\bnmo\b/i, COMPONENT_TITLES["node-maintenance-operator"]],
+    [/\bsnr\b/i, COMPONENT_TITLES["self-node-remediation"]],
+    [/\bsbr\b/i, COMPONENT_TITLES["storage-based-remediation"]],
+    [/\bcur\b/i, COMPONENT_TITLES["customized-user-remediation"]],
+  ];
+
+  for (const [pattern, title] of patterns) {
+    if (pattern.test(text)) {
+      return title;
+    }
+  }
+
+  return null;
+}
+
+/**
  * Operator label for a table row.
  * @param {DiscoveredJob} job
  * @returns {string}
  */
 function rowTitle(job) {
-  if (job.component === "rhwa-system-tests") {
-    const target = job.target || "";
-    /** @type {[RegExp, string][]} */
-    const patterns = [
-      [/\bfar\b/i, COMPONENT_TITLES["fence-agents-remediation"]],
-      [/\bmdr\b/i, COMPONENT_TITLES["machine-deletion-remediation"]],
-      [/\bnhc\b/i, COMPONENT_TITLES["node-healthcheck-operator"]],
-      [/\bnmo\b/i, COMPONENT_TITLES["node-maintenance-operator"]],
-      [/\bsnr\b/i, COMPONENT_TITLES["self-node-remediation"]],
-      [/\bsbr\b/i, COMPONENT_TITLES["storage-based-remediation"]],
-      [/\bwao\b/i, COMPONENT_TITLES["workload-availability-operator"]],
-      [/\bcur\b/i, COMPONENT_TITLES["customized-user-remediation"]],
-    ];
+  const target = job.target || "";
 
-    for (const [pattern, title] of patterns) {
-      if (pattern.test(target)) {
+  if (job.component === "rhwa-system-tests") {
+    if (/\bsbr\b/i.test(target) && /\bodf\b/i.test(target)) {
+      return "SBR — Storage Based Remediation + ODF";
+    }
+
+    return (
+      operatorTitleFromText(target) || COMPONENT_TITLES["rhwa-system-tests"]
+    );
+  }
+
+  if (job.component === "workload-availability-operator") {
+    /** @type {Record<string, string>} */
+    const waoOperands = {
+      far: "FAR — Fence Agent Remediation Operand",
+      mdr: "MDR — Machine Deletion Operand",
+      nhc: "NHC — Node HealthCheck Operand",
+      nmo: "NMO — Node Maintenance Operand",
+      snr: "SNR — Self Node Remediation Operand",
+      sbr: "SBR — Storage Based Remediation Operand",
+    };
+
+    for (const [key, title] of Object.entries(waoOperands)) {
+      if (new RegExp(`\\b${key}\\b`, "i").test(target)) {
         return title;
       }
     }
 
-    return COMPONENT_TITLES["rhwa-system-tests"];
+    return COMPONENT_TITLES["workload-availability-operator"];
   }
 
   return componentTitle(job);
@@ -597,16 +652,14 @@ function renderJobTable(jobs, options) {
     lines.push("| Operator | Cron | Status |");
     lines.push("| --- | --- | --- |");
     for (const job of jobs) {
-      const label = displayLabel(job);
-      const status = linkStatus ? `[${label}](${jobHistoryUrl(job)})` : label;
+      const status = linkStatus ? jobStatusBadge(job) : displayLabel(job);
       lines.push(`| ${rowTitle(job)} | \`${job.cron || ""}\` | ${status} |`);
     }
   } else {
     lines.push("| Operator | Status |");
     lines.push("| --- | --- |");
     for (const job of jobs) {
-      const label = displayLabel(job);
-      const status = linkStatus ? `[${label}](${jobHistoryUrl(job)})` : label;
+      const status = linkStatus ? jobStatusBadge(job) : displayLabel(job);
       lines.push(`| ${rowTitle(job)} | ${status} |`);
     }
   }
@@ -1070,6 +1123,8 @@ module.exports = {
   DAILY_START,
   DAILY_END,
   HISTORY_BASE,
+  BADGE_BASE,
+  jobStatusBadge,
   classifyCron,
   isHomeDailyJob,
   allJobsCategory,
