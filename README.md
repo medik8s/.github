@@ -10,6 +10,7 @@ Special repository for organization-wide reusable Templates, Workflows, and comm
 - [Design Documents](designs/AGENTS.md)
 - [Community Release Scripts](scripts/)
 - [PR CI Label Workflow](docs/pr-check-label.md)
+- [Wiki CI Status Automation](docs/wiki-ci-status.md)
 
 ## JavaScript development
 

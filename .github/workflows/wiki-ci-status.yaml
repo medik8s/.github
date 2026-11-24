@@ -1,0 +1,83 @@
+name: Wiki CI Status
+
+on:
+  schedule:
+    # 05:00 UTC — after the RHWA daily periodics start at 04:00 UTC
+    - cron: "0 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wiki-ci-status
+  cancel-in-progress: false
+
+jobs:
+  update-wiki:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check wiki token
+        env:
+          WIKI_TOKEN: ${{ secrets.WIKI_TOKEN }}
+        run: |
+          if [ -z "${WIKI_TOKEN}" ]; then
+            echo "WIKI_TOKEN secret is required to push to the organization wiki." >&2
+            exit 1
+          fi
+
+      - name: Checkout .github
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Checkout openshift/release (jobs only)
+        uses: actions/checkout@v6
+        with:
+          repository: openshift/release
+          path: release
+          sparse-checkout: |
+            ci-operator/jobs/medik8s
+            ci-operator/jobs/openshift/rhwa-system-tests
+          persist-credentials: false
+
+      - name: Checkout wiki
+        env:
+          WIKI_TOKEN: ${{ secrets.WIKI_TOKEN }}
+        run: |
+          git clone --depth 1 \
+            "https://x-access-token:${WIKI_TOKEN}@github.com/medik8s/.github.wiki.git" \
+            wiki
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate wiki pages
+        id: generate
+        run: |
+          node scripts/wiki-ci-status.cjs \
+            --release-dir "${GITHUB_WORKSPACE}/release" \
+            --wiki-dir "${GITHUB_WORKSPACE}/wiki"
+
+      - name: Commit and push wiki changes
+        working-directory: wiki
+        env:
+          WIKI_TOKEN: ${{ secrets.WIKI_TOKEN }}
+        run: |
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "No wiki changes to publish."
+            exit 0
+          fi
+
+          git config user.name "medik8s-wiki-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Home.md Weekly-CI-Status.md All-Jobs.md
+          git commit -m "ci: refresh CI status wiki pages from openshift/release"
+          DEFAULT_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+          git push "https://x-access-token:${WIKI_TOKEN}@github.com/medik8s/.github.wiki.git" "HEAD:${DEFAULT_BRANCH}"
